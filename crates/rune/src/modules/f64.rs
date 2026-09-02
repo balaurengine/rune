@@ -297,7 +297,9 @@ fn abs(this: f64) -> f64 {
 #[rune::function(instance)]
 #[cfg(feature = "std")]
 fn powf(this: f64, other: f64) -> f64 {
-    this.powf(other)
+    // Balaur fork: `f64::powf` is the platform libm and differs across
+    // operating systems, which a deterministic simulation cannot have.
+    libm::pow(this, other)
 }
 
 /// Raises a number to an integer power.
@@ -317,7 +319,9 @@ fn powf(this: f64, other: f64) -> f64 {
 #[rune::function(instance)]
 #[cfg(feature = "std")]
 fn powi(this: f64, other: i32) -> f64 {
-    this.powi(other)
+    // Balaur fork: same reason as `powf`. Routing both through one `pow` also
+    // makes `x.powi(2)` and `x.powf(2.0)` agree, which upstream does not promise.
+    libm::pow(this, f64::from(other))
 }
 
 /// Returns the largest integer less than or equal to `self`.

@@ -79,6 +79,9 @@ rand = { version = "0.8.5", optional = true }
 memchr = "2.7.4"
 unicode-ident = "1.0.12"
 
+# Balaur fork: bit-identical `powf`/`powi` on every platform.
+libm = "0.2"
+
 [dev-dependencies]
 tokio = { version = "1.28.1", features = ["full"] }
 static_assertions = "1.1.0"
