@@ -158,7 +158,7 @@ pub use self::type_of::{MaybeTypeOf, TypeHash, TypeOf};
 
 pub mod unit;
 pub(crate) use self::unit::UnitFn;
-pub use self::unit::{Unit, UnitStorage};
+pub use self::unit::{Logic, Unit, UnitStorage};
 
 mod value;
 pub use self::value::{
@@ -174,6 +174,9 @@ pub use self::vec::Vec;
 
 mod vec_tuple;
 pub use self::vec_tuple::VecTuple;
+
+mod halt;
+pub use self::halt::HaltSet;
 
 mod vm;
 use self::vm::CallResultOnly;

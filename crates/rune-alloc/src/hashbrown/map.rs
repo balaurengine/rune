@@ -1,7 +1,9 @@
 use core::borrow::Borrow;
 use core::convert::Infallible;
 use core::fmt::{self, Debug};
-use core::hash::{BuildHasher, Hash};
+use core::hash::{BuildHasher, BuildHasherDefault, Hash};
+
+use twox_hash::XxHash64;
 use core::iter::FusedIterator;
 use core::marker::PhantomData;
 use core::mem;
@@ -19,13 +21,27 @@ use super::raw::{Bucket, RawDrain, RawIntoIter, RawIter, RawTable};
 use super::{Equivalent, ErrorOrInsertSlot, HasherFn};
 
 /// Default hasher for `HashMap`.
-pub type DefaultHashBuilder = core::hash::BuildHasherDefault<ahash::AHasher>;
+///
+/// Balaur fork: `XxHash64` at its default seed, which is what `rune-core`
+/// already hashes [`Hash`][crate::__rune_alloc_hash] with. `ahash` was
+/// unusable twice over. Its `BuildHasherDefault` seed comes from `getrandom`
+/// once per process whenever the `runtime-rng` feature is on, which any crate
+/// in the graph can turn on for everyone; and its AES and software paths
+/// disagree, so two platforms differ even at the same seed. Rune hands map
+/// order to scripts through `Object::iter`, `keys` and `values`, gives every
+/// script `HashMap` its own seed, and returns the hash itself from
+/// `std::ops::hash`. XxHash64 is a specified hash with published test
+/// vectors: same bytes in, same digest out, on every target and every run.
+pub type DefaultHashBuilder = BuildHasherDefault<XxHash64>;
 
-/// Default source of random state.
-pub type RandomState = ahash::RandomState;
+/// Default source of hash state.
+///
+/// Balaur fork: fixed, despite the name, which is kept so upstream call sites
+/// such as `RandomState::new` still read correctly.
+pub type RandomState = BuildHasherDefault<XxHash64>;
 
 /// Default hasher.
-pub type Hasher = ahash::AHasher;
+pub type Hasher = XxHash64;
 
 /// A hash map implemented with quadratic probing and SIMD lookup.
 ///

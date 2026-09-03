@@ -15,6 +15,9 @@ pub(crate) enum VmHalt {
     Awaited(Awaited),
     /// Call into a new virtual machine.
     VmCall(VmCall),
+    /// Balaur fork: the instruction pointer reached the VM's halt set. The ip
+    /// is left on the un-executed instruction.
+    Break,
 }
 
 impl VmHalt {
@@ -26,6 +29,7 @@ impl VmHalt {
             Self::Yielded(..) => VmHaltInfo::Yielded,
             Self::Awaited(..) => VmHaltInfo::Awaited,
             Self::VmCall(..) => VmHaltInfo::VmCall,
+            Self::Break => VmHaltInfo::Break,
         }
     }
 }
@@ -43,6 +47,8 @@ pub(crate) enum VmHaltInfo {
     Awaited,
     /// Received instruction to push the inner virtual machine.
     VmCall,
+    /// Balaur fork: stopped on the VM's halt set.
+    Break,
 }
 
 impl fmt::Display for VmHaltInfo {
@@ -53,6 +59,7 @@ impl fmt::Display for VmHaltInfo {
             Self::Yielded => write!(f, "yielded"),
             Self::Awaited => write!(f, "awaited"),
             Self::VmCall => write!(f, "calling into other vm"),
+            Self::Break => write!(f, "stopped at a break point"),
         }
     }
 }

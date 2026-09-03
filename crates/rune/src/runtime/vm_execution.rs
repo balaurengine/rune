@@ -373,6 +373,49 @@ where
         }
     }
 
+    /// Balaur fork: run until the VM's halt set stops it, the execution ends,
+    /// or it errors.
+    ///
+    /// `Ok(None)` means it stopped on a break point, with the instruction
+    /// pointer parked on the instruction that has not run. Only the unit the
+    /// halt set was installed on breaks; a call that enters another unit runs
+    /// to completion, since break points are instruction offsets into one
+    /// unit and mean nothing in another.
+    ///
+    /// Without a halt set this is [`complete`][Self::complete] with the
+    /// return value wrapped in `Some`.
+    pub fn run_to_break(&mut self) -> VmResult<Option<Value>> {
+        loop {
+            let len = self.states.len();
+            let vm = self.head.as_mut();
+
+            match vm_try!(vm.run(None).with_vm(vm)) {
+                VmHalt::Exited(addr) => {
+                    self.state = ExecutionState::Exited(addr);
+                }
+                VmHalt::Break => {
+                    return VmResult::Ok(None);
+                }
+                VmHalt::VmCall(vm_call) => {
+                    vm_try!(vm_call.into_execution(self));
+                    continue;
+                }
+                halt => {
+                    return VmResult::err(VmErrorKind::Halted {
+                        halt: halt.into_info(),
+                    });
+                }
+            }
+
+            if len == 0 {
+                let value = vm_try!(self.end());
+                return VmResult::Ok(Some(value));
+            }
+
+            vm_try!(self.pop_state());
+        }
+    }
+
     /// Step the single execution for one step without support for async
     /// instructions.
     ///

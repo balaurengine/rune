@@ -19,7 +19,7 @@ use self::ops::*;
 use super::{
     budget, Args, Awaited, BorrowMut, Bytes, Call, ControlFlow, DynArgs, DynGuardedArgs, Dynamic,
     Format, FormatSpec, Formatter, FromValue, Function, Future, Generator, GeneratorState,
-    GuardedArgs, Inline, Inst, InstAddress, InstArithmeticOp, InstBitwiseOp, InstOp, InstRange,
+    GuardedArgs, HaltSet, Inline, Inst, InstAddress, InstArithmeticOp, InstBitwiseOp, InstOp, InstRange,
     InstShiftOp, InstTarget, InstValue, InstVariant, Object, Output, OwnedTuple, Pair, Panic,
     Protocol, ProtocolCaller, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo,
     RangeToInclusive, Repr, RttiKind, RuntimeContext, Select, SelectFuture, Stack, Stream, Type,
@@ -125,6 +125,13 @@ pub struct Vm {
     stack: Stack,
     /// Frames relative to the stack.
     call_frames: alloc::Vec<CallFrame>,
+    /// Balaur fork: instruction pointers to halt before, for a debugger.
+    halts: Option<Arc<HaltSet>>,
+    /// Balaur fork: the one ip a resume runs past without halting again.
+    resuming: Option<usize>,
+    /// Balaur fork: instructions executed, for attributing frame cost to a
+    /// script. Deterministic, unlike wall time.
+    instructions: u64,
 }
 
 impl Vm {
@@ -150,6 +157,9 @@ impl Vm {
             last_ip_len: 0,
             stack,
             call_frames: alloc::Vec::new(),
+            halts: None,
+            resuming: None,
+            instructions: 0,
         }
     }
 
@@ -179,6 +189,35 @@ impl Vm {
     #[inline]
     pub fn set_ip(&mut self, ip: usize) {
         self.ip = ip;
+    }
+
+    /// Balaur fork: halt before every instruction in `halts`, reporting
+    /// [`VmHaltInfo::Break`]. `None` runs at full speed.
+    #[inline]
+    pub fn set_halts(&mut self, halts: Option<Arc<HaltSet>>) {
+        self.halts = halts.filter(|h| !h.is_empty());
+    }
+
+    /// Balaur fork: the halt set, if one is installed.
+    #[inline]
+    pub fn halts(&self) -> Option<&Arc<HaltSet>> {
+        self.halts.as_ref()
+    }
+
+    /// Balaur fork: run past `ip` once without halting on it, so resuming
+    /// from a break does not stop on the instruction it is parked on.
+    #[inline]
+    pub fn set_resuming(&mut self, ip: Option<usize>) {
+        self.resuming = ip;
+    }
+
+    /// Balaur fork: instructions this VM has executed since it was built.
+    ///
+    /// Advances by one per dispatch and never resets, so a caller reads it
+    /// either side of a call to price that call.
+    #[inline]
+    pub fn instruction_count(&self) -> u64 {
+        self.instructions
     }
 
     /// Get the stack.
@@ -263,6 +302,7 @@ impl Vm {
         self.ip = 0;
         self.stack.clear();
         self.call_frames.clear();
+        self.resuming = None;
     }
 
     /// Look up a function in the virtual machine by its name.
@@ -3032,6 +3072,18 @@ impl Vm {
                 return VmResult::Ok(VmHalt::Limited);
             }
 
+            // Balaur fork: a debugger's break points. `resuming` is the
+            // instruction a resume is parked on, run once without stopping.
+            if let Some(halts) = &self.halts {
+                if self.resuming != Some(self.ip) && halts.contains(self.ip) {
+                    return VmResult::Ok(VmHalt::Break);
+                }
+
+                self.resuming = None;
+            }
+
+            self.instructions = self.instructions.wrapping_add(1);
+
             let Some((inst, inst_len)) = vm_try!(self.unit.instruction_at(self.ip)) else {
                 return VmResult::err(VmErrorKind::IpOutOfBounds {
                     ip: self.ip,
@@ -3348,6 +3400,9 @@ impl TryClone for Vm {
             last_ip_len: self.last_ip_len,
             stack: self.stack.try_clone()?,
             call_frames: self.call_frames.try_clone()?,
+            halts: self.halts.clone(),
+            resuming: self.resuming,
+            instructions: self.instructions,
         })
     }
 }

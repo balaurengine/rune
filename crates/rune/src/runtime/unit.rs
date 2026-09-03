@@ -51,6 +51,13 @@ pub struct Unit<S = DefaultStorage> {
 assert_impl!(Unit<DefaultStorage>: Send + Sync);
 
 /// Instructions from a single source file.
+///
+/// Balaur fork: exported, because this is the half of a [`Unit`] that a
+/// precompiled pack ships. Serialising the `Unit` itself does not work with a
+/// length-prefixed format such as `bincode`: its `logic` field is
+/// `#[serde(flatten)]`, which serialises as a map of unknown length. Writing
+/// this and rebuilding with [`Unit::from_parts`] also makes it structurally
+/// impossible for debug info to reach a shipped file.
 #[derive(Debug, TryClone, Default, Serialize, Deserialize)]
 #[serde(rename = "Unit")]
 #[try_clone(bound = {S: TryClone})]
@@ -217,6 +224,21 @@ impl<S> Unit<S> {
     #[inline]
     pub(crate) fn function(&self, hash: &Hash) -> Option<&UnitFn> {
         self.logic.functions.get(hash)
+    }
+
+    /// Balaur fork: whether a function runs to completion on the calling VM.
+    ///
+    /// A host that reuses one VM across calls needs this: an async, generator
+    /// or stream function must own its VM, because the value it returns holds
+    /// on to it. `false` for a hash the unit does not define.
+    pub fn is_immediate(&self, hash: Hash) -> bool {
+        matches!(
+            self.logic.functions.get(&hash),
+            Some(UnitFn::Offset {
+                call: Call::Immediate,
+                ..
+            })
+        )
     }
 
     /// Lookup a constant from the unit.

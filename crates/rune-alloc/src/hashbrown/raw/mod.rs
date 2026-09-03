@@ -437,7 +437,7 @@ impl<T> Bucket<T> {
     ///
     /// use rune::alloc::hashbrown::raw::{Bucket, RawTable};
     ///
-    /// type NewHashBuilder = core::hash::BuildHasherDefault<ahash::AHasher>;
+    /// type NewHashBuilder = core::hash::BuildHasherDefault<twox_hash::XxHash64>;
     ///
     /// fn make_hash<K: Hash + ?Sized, S: BuildHasher>(hash_builder: &S, key: &K) -> u64 {
     ///     use core::hash::Hasher;
@@ -598,7 +598,7 @@ impl<T> Bucket<T> {
     ///
     /// use rune::alloc::hashbrown::raw::{Bucket, RawTable};
     ///
-    /// type NewHashBuilder = core::hash::BuildHasherDefault<ahash::AHasher>;
+    /// type NewHashBuilder = core::hash::BuildHasherDefault<twox_hash::XxHash64>;
     ///
     /// fn make_hash<K: Hash + ?Sized, S: BuildHasher>(hash_builder: &S, key: &K) -> u64 {
     ///     use core::hash::Hasher;
@@ -652,7 +652,7 @@ impl<T> Bucket<T> {
     ///
     /// use rune::alloc::hashbrown::raw::{Bucket, RawTable};
     ///
-    /// type NewHashBuilder = core::hash::BuildHasherDefault<ahash::AHasher>;
+    /// type NewHashBuilder = core::hash::BuildHasherDefault<twox_hash::XxHash64>;
     ///
     /// fn make_hash<K: Hash + ?Sized, S: BuildHasher>(hash_builder: &S, key: &K) -> u64 {
     ///     use core::hash::Hasher;
