@@ -65,6 +65,7 @@ pub struct Logic<S = DefaultStorage> {
     /// Storage for the unit.
     storage: S,
     /// Where functions are located in the collection of instructions.
+    #[serde(serialize_with = "sorted_map")]
     functions: hash::Map<UnitFn>,
     /// Static strings.
     static_strings: Vec<Arc<StaticString>>,
@@ -80,9 +81,26 @@ pub struct Logic<S = DefaultStorage> {
     /// Drop sets.
     drop_sets: Vec<Arc<[InstAddress]>>,
     /// Runtime information for types.
+    #[serde(serialize_with = "sorted_map")]
     rtti: hash::Map<Arc<Rtti>>,
     /// Named constants
+    #[serde(serialize_with = "sorted_map")]
     constants: hash::Map<ConstValue>,
+}
+
+/// Balaur fork: a map written in key order, so the same unit serialises to
+/// the same bytes on every machine. `hash::Map` iterates in table order, and
+/// hashbrown lays its table out by the platform's SIMD group width (16 with
+/// SSE2, 8 with NEON), so table order is not the same on x86_64 and aarch64.
+fn sorted_map<S, V>(map: &hash::Map<V>, serializer: S) -> core::result::Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+    V: Serialize,
+{
+    let mut entries = ::rust_alloc::vec::Vec::with_capacity(map.len());
+    entries.extend(map.iter());
+    entries.sort_by_key(|(hash, _)| **hash);
+    serializer.collect_map(entries)
 }
 
 impl<S> Unit<S> {

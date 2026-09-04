@@ -1147,13 +1147,36 @@ impl Inst {
 }
 
 /// What to do with the output of an instruction.
-#[derive(TryClone, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
+#[derive(TryClone, Clone, Copy, PartialEq, Eq, Hash, Encode, Decode)]
 #[try_clone(copy)]
 #[non_exhaustive]
 #[musli(transparent)]
-#[serde(transparent)]
 pub struct Output {
     offset: usize,
+}
+
+// Serialised as a `u32` rather than a `usize`, so a unit compiled on a 64-bit
+// machine reads back on a 32-bit one. See `to_wire`.
+impl Serialize for Output {
+    #[inline]
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_u32(to_wire::<S::Error>(self.offset)?)
+    }
+}
+
+impl<'de> Deserialize<'de> for Output {
+    #[inline]
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(Self {
+            offset: from_wire(u32::deserialize(deserializer)?),
+        })
+    }
 }
 
 impl Output {
@@ -1281,8 +1304,6 @@ impl IntoOutput for Value {
     Hash,
     PartialOrd,
     Ord,
-    Serialize,
-    Deserialize,
     Decode,
     Encode,
 )]
@@ -1290,6 +1311,56 @@ impl IntoOutput for Value {
 #[try_clone(copy)]
 pub struct InstAddress {
     offset: usize,
+}
+
+/// A stack offset as it travels in a compiled unit: 32 bits, not a `usize`.
+///
+/// `InstAddress::INVALID` and `Output::discard` both mark themselves with
+/// `usize::MAX`, which is 2^64-1 where a unit is compiled and does not fit a
+/// `usize` at all where one may be run — a browser is 32-bit. Writing the
+/// sentinel as `u32::MAX` keeps a compiled script portable between the two,
+/// and 32 bits is far more than a stack slot ever needs besides.
+#[inline]
+fn to_wire<E>(offset: usize) -> Result<u32, E>
+where
+    E: serde::ser::Error,
+{
+    if offset == usize::MAX {
+        return Ok(u32::MAX);
+    }
+    u32::try_from(offset).map_err(|_| E::custom("stack offset does not fit in 32 bits"))
+}
+
+/// The inverse of [`to_wire`], restoring the sentinel to this platform's.
+#[inline]
+const fn from_wire(raw: u32) -> usize {
+    if raw == u32::MAX {
+        usize::MAX
+    } else {
+        raw as usize
+    }
+}
+
+impl Serialize for InstAddress {
+    #[inline]
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_u32(to_wire::<S::Error>(self.offset)?)
+    }
+}
+
+impl<'de> Deserialize<'de> for InstAddress {
+    #[inline]
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(Self {
+            offset: from_wire(u32::deserialize(deserializer)?),
+        })
+    }
 }
 
 impl InstAddress {
