@@ -18,7 +18,7 @@ pub use self::compile_visitor::CompileVisitor;
 pub(crate) use self::compile_visitor::NoopCompileVisitor;
 
 pub(crate) mod context;
-pub use self::context::Context;
+pub use self::context::{Context, ContextMeta};
 
 pub(crate) mod context_error;
 pub use self::context_error::ContextError;

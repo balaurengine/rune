@@ -245,8 +245,7 @@ pub enum Kind {
 
 impl Kind {
     /// Access the underlying signature of the kind, if available.
-    #[cfg(all(feature = "doc", any(feature = "languageserver", feature = "cli")))]
-    pub(crate) fn as_signature(&self) -> Option<&Signature> {
+    pub fn as_signature(&self) -> Option<&Signature> {
         match self {
             Kind::Struct { constructor, .. } => constructor.as_ref(),
             Kind::Function { signature, .. } => Some(signature),

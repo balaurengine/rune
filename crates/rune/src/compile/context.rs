@@ -215,13 +215,13 @@ impl TraitContext<'_> {
 /// Context metadata.
 #[derive(Debug)]
 #[non_exhaustive]
-pub(crate) struct ContextMeta {
+pub struct ContextMeta {
     /// Type hash for the given meta item.
-    pub(crate) hash: Hash,
+    pub hash: Hash,
     /// The item of the returned compile meta.
-    pub(crate) item: Option<ItemBuf>,
+    pub item: Option<ItemBuf>,
     /// The kind of the compile meta.
-    pub(crate) kind: meta::Kind,
+    pub kind: meta::Kind,
     /// Deprecation notice.
     #[cfg(feature = "doc")]
     pub(crate) deprecated: Option<Box<str>>,
@@ -475,8 +475,7 @@ impl Context {
     }
 
     /// Iterate over all available functions in the [Context].
-    #[cfg(any(feature = "cli", feature = "languageserver"))]
-    pub(crate) fn iter_functions(&self) -> impl Iterator<Item = (&ContextMeta, &meta::Signature)> {
+    pub fn iter_functions(&self) -> impl Iterator<Item = (&ContextMeta, &meta::Signature)> {
         self.meta.iter().flat_map(|meta| {
             let signature = meta.kind.as_signature()?;
             Some((meta, signature))
