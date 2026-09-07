@@ -207,6 +207,24 @@ impl Attribute for Test {
     const PATH: &'static str = "test";
 }
 
+/// `#[export]` on a constant: the value is a property a tool may read and a
+/// scene may override, rather than an implementation detail.
+///
+/// The bare form says the default's own type is the type. `#[export(node)]`
+/// and `#[export(asset)]` say what a string means, which is the one thing a
+/// default cannot carry: `""` is a string unless something says otherwise.
+#[derive(Parse)]
+pub(crate) struct Export {
+    /// The optional `(node)` or `(asset)`.
+    #[rune(iter)]
+    pub kind: Option<ast::Parenthesized<ast::Ident, T![,]>>,
+}
+
+impl Attribute for Export {
+    /// Must match the specified name.
+    const PATH: &'static str = "export";
+}
+
 /// NB: at this point we don't support attributes beyond the empty `#[bench]`.
 #[derive(Parse)]
 pub(crate) struct Bench {}

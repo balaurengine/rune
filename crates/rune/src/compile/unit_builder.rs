@@ -4,6 +4,7 @@
 //! metadata like function locations.
 
 use core::fmt;
+use core::mem::take;
 
 use ::rust_alloc::sync::Arc;
 
@@ -88,6 +89,12 @@ pub(crate) struct UnitBuilder {
     constants: hash::Map<ConstValue>,
     /// Hash to identifiers.
     hash_to_ident: HashMap<Hash, Box<str>>,
+    /// Constants that carried `#[export]`, by name, with the kind the
+    /// attribute named. Laid into the unit as one constant so a tool can ask
+    /// what a script exposes without being told the names first: the unit's
+    /// constants are keyed by hash, and a hash cannot be walked back to a
+    /// name.
+    exports: HashMap<alloc::String, ConstValue>,
 }
 
 impl UnitBuilder {
@@ -113,6 +120,13 @@ impl UnitBuilder {
         if let Some(debug) = &mut self.debug {
             debug.functions_rev = self.functions_rev;
             debug.hash_to_ident = self.hash_to_ident;
+        }
+
+        if !self.exports.is_empty() {
+            let exports = take(&mut self.exports);
+            self.constants
+                .try_insert(Unit::<S>::EXPORTS, ConstValue::object(exports))
+                .with_span(span)?;
         }
 
         for (from, to) in self.reexports {
@@ -654,6 +668,20 @@ impl UnitBuilder {
                 };
 
                 let value = const_value.try_clone().with_span(span)?;
+
+                // The table carries the value beside the kind. A unit's
+                // constants are keyed by hash, and the hash is of the whole
+                // item path, so a name alone cannot find one again.
+                if let Some(kind) = query.exported_kind(meta.hash) {
+                    let item = pool.item(meta.item_meta.item);
+
+                    if let Some(name) = item.last().and_then(|c| c.as_str()) {
+                        let kind = ConstValue::from(alloc::String::try_from(kind)?);
+                        let pair = Box::try_from([kind, value.try_clone().with_span(span)?])?;
+                        self.exports
+                            .try_insert(alloc::String::try_from(name)?, ConstValue::tuple(pair))?;
+                    }
+                }
 
                 self.constants
                     .try_insert(meta.hash, value)

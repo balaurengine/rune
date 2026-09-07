@@ -18,7 +18,10 @@ use crate as rune;
 use crate::alloc::prelude::*;
 use crate::alloc::{self, Box, String, Vec};
 use crate::hash;
-use crate::runtime::{Call, ConstValue, DebugInfo, Inst, InstAddress, Rtti, StaticString};
+use crate::runtime::const_value::EmptyConstContext;
+use crate::runtime::{
+    Call, ConstValue, DebugInfo, Inst, InstAddress, Rtti, RuntimeError, StaticString, Value,
+};
 use crate::Hash;
 
 pub use self::storage::{ArrayUnit, EncodeError, UnitEncoder, UnitStorage};
@@ -179,6 +182,50 @@ impl<S> Unit<S> {
     #[inline]
     pub(crate) fn iter_static_drop_sets(&self) -> impl Iterator<Item = &[InstAddress]> + '_ {
         self.logic.drop_sets.iter().map(|v| &**v)
+    }
+
+    /// Where `#[export]` constants are laid down, as one object of name to
+    /// kind.
+    ///
+    /// A fixed hash rather than a name in the item tree: the unit's constants
+    /// are keyed by hash, so a table that has to be found without knowing its
+    /// contents needs an address agreed in advance.
+    pub const EXPORTS: Hash = Hash::new(0x8ea2_1b0c_7d44_5f31);
+
+    /// What the compiled scripts marked `#[export]`, as `(name, kind, value)`.
+    ///
+    /// `kind` is `"value"` unless the attribute named one. The value is the
+    /// constant's own, converted here because a `ConstValue` is not something
+    /// a caller outside this crate can read.
+    ///
+    /// The order is the constant table's rather than the source's, which does
+    /// not survive compilation.
+    ///
+    /// # Errors
+    /// If an exported constant holds something that is not a runtime value.
+    pub fn exported_constants(&self) -> Result<::rust_alloc::vec::Vec<(&str, &str, Value)>, RuntimeError> {
+        let mut out = ::rust_alloc::vec::Vec::new();
+
+        let Some(fields) = self
+            .logic
+            .constants
+            .get(&Self::EXPORTS)
+            .and_then(ConstValue::as_object)
+        else {
+            return Ok(out);
+        };
+
+        for (name, entry) in fields {
+            let Some([kind, value]) = entry.as_tuple() else {
+                continue;
+            };
+            let Some(kind) = kind.as_str() else {
+                continue;
+            };
+            out.push((name.as_str(), kind, value.to_value_with(&EmptyConstContext)?));
+        }
+
+        Ok(out)
     }
 
     /// Iterate over all constants in the unit.

@@ -59,6 +59,11 @@ pub(crate) struct QueryInner<'arena> {
     const_fns: HashMap<ItemId, Rc<ConstFn<'arena>>>,
     /// Indexed constant values.
     constants: HashMap<Hash, ConstValue>,
+    /// Constants carrying `#[export]`, by the hash of the item they were
+    /// indexed under, with the kind the attribute named. The unit builder
+    /// reads this when it lays a constant down, so the compiled unit can say
+    /// which of its constants a tool is meant to show.
+    exported: HashMap<Hash, alloc::String>,
     /// The result of internally resolved macros.
     internal_macros: HashMap<NonZeroId, Arc<BuiltInMacro>>,
     /// Expanded macros.
@@ -79,6 +84,11 @@ impl QueryInner<'_> {
     /// Get a constant value but only from the dynamic query system.
     pub(crate) fn get_const_value(&self, hash: Hash) -> Option<&ConstValue> {
         self.constants.get(&hash)
+    }
+
+    /// The kind `#[export]` named for this constant, if it carried one.
+    pub(crate) fn exported_kind(&self, hash: Hash) -> Option<&str> {
+        self.exported.get(&hash).map(alloc::String::as_str)
     }
 }
 
@@ -692,6 +702,21 @@ impl<'a, 'arena> Query<'a, 'arena> {
 
     /// Index a constant expression.
     #[tracing::instrument(skip_all)]
+    /// Record that a constant carried `#[export]`, with the kind it named.
+    ///
+    /// Kept beside the constant rather than in its meta: `meta::Kind::Const`
+    /// is a bare variant, and widening it would touch every match on it for
+    /// something only the unit builder reads.
+    pub(crate) fn index_exported_const(
+        &mut self,
+        item_meta: ItemMeta,
+        kind: alloc::String,
+    ) -> compile::Result<()> {
+        let hash = self.pool.item_type_hash(item_meta.item);
+        self.inner.exported.try_insert(hash, kind)?;
+        Ok(())
+    }
+
     pub(crate) fn index_const_expr(
         &mut self,
         item_meta: ItemMeta,

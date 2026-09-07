@@ -156,6 +156,37 @@ pub struct ConstValue {
 }
 
 impl ConstValue {
+    /// The fields of an anonymous object, or `None` for any other constant.
+    pub(crate) fn as_object(&self) -> Option<&HashMap<String, ConstValue>> {
+        match &self.kind {
+            ConstValueKind::Object(fields) => Some(fields),
+            _ => None,
+        }
+    }
+
+    /// The two members of a pair constant, or `None` for anything else.
+    pub(crate) fn as_tuple(&self) -> Option<&[ConstValue; 2]> {
+        match &self.kind {
+            ConstValueKind::Tuple(values) => values.as_ref().try_into().ok(),
+            _ => None,
+        }
+    }
+
+    /// The text of a string constant, or `None` for any other constant.
+    pub(crate) fn as_str(&self) -> Option<&str> {
+        match &self.kind {
+            ConstValueKind::String(text) => Some(text.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Construct a new anonymous object constant value.
+    pub fn object(fields: HashMap<String, ConstValue>) -> ConstValue {
+        ConstValue {
+            kind: ConstValueKind::Object(fields),
+        }
+    }
+
     /// Construct a new tuple constant value.
     pub fn tuple(values: Box<[ConstValue]>) -> ConstValue {
         ConstValue {

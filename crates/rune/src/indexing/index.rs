@@ -3,7 +3,8 @@ use core::mem::take;
 use tracing::instrument_ast;
 
 use crate::alloc::prelude::*;
-use crate::alloc::VecDeque;
+use crate::alloc::try_format;
+use crate::alloc::{self, VecDeque};
 use crate::ast::{self, OptionSpanned, Spanned};
 use crate::compile::{
     self, attrs, meta, Doc, DynLocation, ErrorKind, ItemMeta, Location, Visibility, WithSpan,
@@ -1078,6 +1079,14 @@ fn item_const(idx: &mut Indexer<'_, '_>, mut ast: ast::ItemConst) -> compile::Re
 
     let docs = Doc::collect_from(resolve_context!(idx.q), &mut p, &ast.attributes)?;
 
+    // `#[export]` is read before the catch-all below, so a constant a game
+    // means to expose is a declaration the compiler checks rather than a
+    // convention a typo can break.
+    let exported = match p.try_parse::<attrs::Export>(resolve_context!(idx.q), &ast.attributes)? {
+        Some((_, export)) => Some(export_kind(idx, &export)?),
+        None => None,
+    };
+
     if let Some(first) = p.remaining(&ast.attributes).next() {
         return Err(compile::Error::msg(
             first,
@@ -1102,9 +1111,50 @@ fn item_const(idx: &mut Indexer<'_, '_>, mut ast: ast::ItemConst) -> compile::Re
         indexing::ConstExpr::Ast(Box::try_new(ast.expr.try_clone()?)?),
     )?;
 
+    if let Some(kind) = exported {
+        idx.q.index_exported_const(item_meta, kind)?;
+    }
+
     idx.item = idx_item;
     idx.items.pop(guard).with_span(&ast)?;
     Ok(())
+}
+
+/// The kind `#[export]` named, or `"value"` when it named none.
+///
+/// A default carries its own type, so the bare form needs no argument. The
+/// argument exists for the one thing a default cannot say: whether a string
+/// is text, the name of a node, or the path of an asset.
+fn export_kind(idx: &mut Indexer<'_, '_>, export: &attrs::Export) -> compile::Result<alloc::String> {
+    let Some(kind) = &export.kind else {
+        return Ok(alloc::String::try_from("value")?);
+    };
+
+    let mut named = kind.iter();
+
+    let Some((ident, _)) = named.next() else {
+        return Err(compile::Error::msg(
+            kind,
+            "`#[export()]` names no kind; write `#[export]` for a plain value",
+        ));
+    };
+
+    if named.next().is_some() {
+        return Err(compile::Error::msg(
+            kind,
+            "`#[export]` takes one kind, not several",
+        ));
+    }
+
+    let name = ident.resolve(resolve_context!(idx.q))?;
+
+    match name {
+        "node" | "asset" | "value" => Ok(alloc::String::try_from(name)?),
+        other => Err(compile::Error::msg(
+            ident,
+            try_format!("`#[export({other})]` is not a kind; expected `node` or `asset`"),
+        )),
+    }
 }
 
 #[instrument_ast(span = ast)]
