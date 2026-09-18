@@ -42,3 +42,12 @@ fn test_closure_in_lit_object() -> Result<()> {
     assert_eq!(3, proxy.d);
     Ok(())
 }
+
+#[test]
+fn a_closure_returns_a_local() {
+    let out: i64 = rune! {
+        let f = || { let ok = 7; ok };
+        f()
+    };
+    assert_eq!(out, 7);
+}

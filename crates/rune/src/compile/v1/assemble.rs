@@ -314,7 +314,14 @@ pub(crate) fn expr_closure_secondary<'hir>(
         }
     }
 
-    return_(cx, hir, hir.body, expr)?.ignore();
+    // A block body shares the closure's scope, as a function's does: its own
+    // scope would drop a returned local before the return reads it.
+    match hir.body.kind {
+        hir::ExprKind::Block(block) if block.label.is_none() => {
+            return_(cx, hir, block, block_without_scope)?.ignore();
+        }
+        _ => return_(cx, hir, hir.body, expr)?.ignore(),
+    }
 
     environment.free()?;
     arguments.free()?;

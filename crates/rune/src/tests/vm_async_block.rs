@@ -13,3 +13,12 @@ fn test_async_block() {
     };
     assert_eq!(out, 21);
 }
+
+#[test]
+fn an_async_closure_returns_a_local() {
+    let out: i64 = rune! {
+        let f = async || { let ok = 7; ok };
+        f().await
+    };
+    assert_eq!(out, 7);
+}
