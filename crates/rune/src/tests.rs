@@ -439,6 +439,8 @@ mod builtin_macros;
 #[cfg(not(miri))]
 mod capture;
 #[cfg(not(miri))]
+mod cross_unit_call;
+#[cfg(not(miri))]
 mod comments;
 #[cfg(not(miri))]
 mod compiler_docs;

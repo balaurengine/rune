@@ -895,7 +895,13 @@ impl FnOffset {
         let same_context =
             matches!(self.call, Call::Immediate if vm.is_same_context(&self.context));
 
-        vm_try!(vm.push_call_frame(self.offset, addr, args, Isolated::new(!same_context), out));
+        vm_try!(vm.push_call_frame(
+            self.offset,
+            addr,
+            args,
+            Isolated::new(!same_context || !same_unit),
+            out,
+        ));
         vm_try!(extra.into_stack(vm.stack_mut()));
 
         // Fast path, just allocate a call frame and keep running.
