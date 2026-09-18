@@ -221,3 +221,17 @@ fn i8() {
     op_tests!(i8, 0b1100i8 >> 2 = 0b1100i8 >> 2);
     op_tests!(i64, !0b10100i8 = !0b10100i64);
 }
+
+#[test]
+fn an_integer_and_a_float_mix_as_floats() {
+    let out: f64 = rune! {
+        let a = 1 + 0.5;
+        let b = 2.0 * 3;
+        let c = 1;
+        c += 0.25;
+        a + b + c
+    };
+    assert_eq!(out, 1.5 + 6.0 + 1.25);
+    let out: bool = rune! { 1 == 1.0 && 2 < 2.5 && 3.5 > 3 && (() != "x") && !(1 == "1") };
+    assert!(out);
+}

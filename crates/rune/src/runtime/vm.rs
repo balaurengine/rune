@@ -1604,6 +1604,11 @@ impl Vm {
         'fallback: {
             let inline = match (lhs.as_ref(), rhs.as_ref()) {
                 (Repr::Inline(lhs), Repr::Inline(rhs)) => match (lhs, rhs) {
+                    // Balaur fork: an integer and a float make a float.
+                    (lhs, rhs) if lhs.mixed(rhs).is_some() => {
+                        let (a, b) = lhs.mixed(rhs).unwrap_or_default();
+                        Inline::Float((ops.f64)(a, b))
+                    }
                     (Inline::Unsigned(lhs), rhs) => {
                         let rhs = vm_try!(rhs.as_integer());
                         let value = vm_try!((ops.u64)(*lhs, rhs).ok_or_else(ops.error));
@@ -1836,6 +1841,12 @@ impl Vm {
                 }
             },
             TargetValue::Pair(mut lhs, rhs) => match (lhs.as_mut(), rhs.as_ref()) {
+                // Balaur fork: an integer and a float make a float.
+                (Repr::Inline(lhs), Repr::Inline(rhs)) if lhs.mixed(rhs).is_some() => {
+                    let (a, b) = lhs.mixed(rhs).unwrap_or_default();
+                    *lhs = Inline::Float((ops.f64)(a, b));
+                    return VmResult::Ok(());
+                }
                 (Repr::Inline(Inline::Signed(lhs)), Repr::Inline(rhs)) => {
                     let rhs = vm_try!(rhs.as_integer());
                     let out = vm_try!((ops.i64)(*lhs, rhs).ok_or_else(ops.error));

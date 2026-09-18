@@ -77,27 +77,39 @@ impl Inline {
         }
     }
 
+    /// Balaur fork: an integer and a float as two floats, the way a dynamic
+    /// language mixes them; `None` unless exactly that pair.
+    pub(crate) fn mixed(&self, other: &Self) -> Option<(f64, f64)> {
+        match (self, other) {
+            (Inline::Signed(a), Inline::Float(b)) => Some((*a as f64, *b)),
+            (Inline::Float(a), Inline::Signed(b)) => Some((*a, *b as f64)),
+            (Inline::Unsigned(a), Inline::Float(b)) => Some((*a as f64, *b)),
+            (Inline::Float(a), Inline::Unsigned(b)) => Some((*a, *b as f64)),
+            _ => None,
+        }
+    }
+
     /// Perform a partial equality check over two inline values.
+    ///
+    /// Balaur fork: an integer equals a float of the same value, and two
+    /// values of different kinds are unequal rather than an error.
     pub(crate) fn partial_eq(&self, other: &Self) -> Result<bool, RuntimeError> {
+        if let Some((a, b)) = self.mixed(other) {
+            return Ok(a == b);
+        }
         match (self, other) {
             (Inline::Unit, Inline::Unit) => Ok(true),
             (Inline::Bool(a), Inline::Bool(b)) => Ok(*a == *b),
             (Inline::Char(a), Inline::Char(b)) => Ok(*a == *b),
             (Inline::Signed(a), Inline::Signed(b)) => Ok(*a == *b),
-            (Inline::Signed(a), rhs) => Ok(*a == rhs.as_integer::<i64>()?),
+            (Inline::Signed(a), rhs) => Ok(rhs.as_integer::<i64>().is_ok_and(|b| *a == b)),
             (Inline::Unsigned(a), Inline::Unsigned(b)) => Ok(*a == *b),
-            (Inline::Unsigned(a), rhs) => Ok(*a == rhs.as_integer::<u64>()?),
+            (Inline::Unsigned(a), rhs) => Ok(rhs.as_integer::<u64>().is_ok_and(|b| *a == b)),
             (Inline::Float(a), Inline::Float(b)) => Ok(*a == *b),
             (Inline::Type(a), Inline::Type(b)) => Ok(*a == *b),
             (Inline::Ordering(a), Inline::Ordering(b)) => Ok(*a == *b),
             (Inline::Hash(a), Inline::Hash(b)) => Ok(*a == *b),
-            (lhs, rhs) => Err(RuntimeError::from(
-                VmErrorKind::UnsupportedBinaryOperation {
-                    op: Protocol::PARTIAL_EQ.name,
-                    lhs: lhs.type_info(),
-                    rhs: rhs.type_info(),
-                },
-            )),
+            _ => Ok(false),
         }
     }
 
@@ -131,7 +143,12 @@ impl Inline {
     }
 
     /// Partial comparison implementation for inline.
+    ///
+    /// Balaur fork: an integer and a float compare as two floats.
     pub(crate) fn partial_cmp(&self, other: &Self) -> Result<Option<Ordering>, RuntimeError> {
+        if let Some((a, b)) = self.mixed(other) {
+            return Ok(a.partial_cmp(&b));
+        }
         match (self, other) {
             (Inline::Unit, Inline::Unit) => Ok(Some(Ordering::Equal)),
             (Inline::Bool(lhs), Inline::Bool(rhs)) => Ok(lhs.partial_cmp(rhs)),

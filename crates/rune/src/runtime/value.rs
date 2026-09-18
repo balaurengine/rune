@@ -1068,6 +1068,28 @@ impl Value {
         b: &Value,
         caller: &mut dyn ProtocolCaller,
     ) -> VmResult<bool> {
+        // Balaur fork: values of different types are unequal, not an error;
+        // two numbers compare by value whatever their kinds.
+        let number = |v: &Value| {
+            matches!(
+                v.as_ref(),
+                Repr::Inline(Inline::Signed(_) | Inline::Unsigned(_) | Inline::Float(_))
+            )
+        };
+        let numbers = number(self) && number(b);
+        if !numbers && self.type_hash() != b.type_hash() {
+            // An external type may still answer for another type's value.
+            if matches!(self.as_ref(), Repr::Any(..)) {
+                if let CallResultOnly::Ok(value) = vm_try!(caller.try_call_protocol_fn(
+                    &Protocol::PARTIAL_EQ,
+                    self.clone(),
+                    &mut Some((b.clone(),))
+                )) {
+                    return VmResult::Ok(vm_try!(bool::from_value(value)));
+                }
+            }
+            return VmResult::Ok(false);
+        }
         self.bin_op_with(
             b,
             caller,
