@@ -3,7 +3,7 @@
 #[cfg(feature = "alloc")]
 pub(crate) mod hash_map;
 #[cfg(feature = "alloc")]
-pub(crate) use hash_map::HashMap;
+pub use hash_map::HashMap;
 
 #[cfg(feature = "alloc")]
 pub(crate) mod hash_set;

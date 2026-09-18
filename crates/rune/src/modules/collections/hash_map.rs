@@ -135,11 +135,20 @@ pub fn module() -> Result<Module, ContextError> {
 /// ```
 #[derive(Any)]
 #[rune(item = ::std::collections::hash_map)]
-pub(crate) struct HashMap {
+pub struct HashMap {
     table: Table<Value>,
 }
 
 impl HashMap {
+    /// Balaur fork: every entry, for a host converting a map out of Rune.
+    pub fn entries(&self) -> crate::alloc::Result<crate::alloc::Vec<(Value, Value)>> {
+        let mut out = crate::alloc::Vec::try_with_capacity(self.table.len())?;
+        for (key, value) in self.table.iter() {
+            out.try_push((key.clone(), value.clone()))?;
+        }
+        Ok(out)
+    }
+
     /// Creates an empty `HashMap`.
     ///
     /// The hash map is initially created with a capacity of 0, so it will not
