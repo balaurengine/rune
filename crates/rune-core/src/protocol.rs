@@ -299,6 +299,13 @@ define! {
         /// Allows the `%=` operator to apply to values of this type, where the current type is the left-hand side.
     };
 
+    /// Balaur fork: the function to implement for unary negation.
+    pub const NEG: Protocol = Protocol {
+        hash: 0x6b1f4e2a9d03c857u64,
+        repr: "let $out = -$value",
+        /// Allows the unary `-` operator to apply to values of this type.
+    };
+
     /// The function to implement for the bitwise and operation.
     pub const BIT_AND: Protocol = Protocol {
         hash: 0x0e11f20d940eebe8u64,

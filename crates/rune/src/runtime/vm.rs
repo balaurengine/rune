@@ -1496,6 +1496,22 @@ impl Vm {
         let value = match value.as_ref() {
             Repr::Inline(Inline::Float(value)) => Value::from(-value),
             Repr::Inline(Inline::Signed(value)) => Value::from(-value),
+            // Balaur fork: a type negates itself through `NEG`.
+            Repr::Any(..) => {
+                let target = value.clone();
+                let mut args = DynGuardedArgs::new(());
+                if let CallResult::Unsupported(target) = vm_try!(self.call_instance_fn(
+                    Isolated::None,
+                    target,
+                    &Protocol::NEG,
+                    &mut args,
+                    out
+                )) {
+                    let operand = target.type_info();
+                    return err(VmErrorKind::UnsupportedUnaryOperation { op: "-", operand });
+                }
+                return VmResult::Ok(());
+            }
             actual => {
                 let operand = actual.type_info();
                 return err(VmErrorKind::UnsupportedUnaryOperation { op: "-", operand });
@@ -1814,6 +1830,10 @@ impl Vm {
     ) -> VmResult<()> {
         let ops = AssignArithmeticOps::from_op(op);
 
+        if vm_try!(self.assign_through_binary(op, target, rhs)) {
+            return VmResult::Ok(());
+        }
+
         let fallback = match vm_try!(target_value(&mut self.stack, &self.unit, target, rhs)) {
             TargetValue::Same(value) => match value.as_mut() {
                 Repr::Inline(Inline::Signed(value)) => {
@@ -1877,6 +1897,83 @@ impl Vm {
         };
 
         self.target_fallback_assign(fallback, &ops.protocol)
+    }
+
+    /// Balaur fork: a type with `+` and no `+=` takes `a = a + b`, so a value
+    /// type can stay read-only and still be written `a += b`.
+    fn assign_through_binary(
+        &mut self,
+        op: InstArithmeticOp,
+        target: InstTarget,
+        rhs: InstAddress,
+    ) -> VmResult<bool> {
+        let (binary, assign): (&'static Protocol, &'static Protocol) = match op {
+            InstArithmeticOp::Add => (&Protocol::ADD, &Protocol::ADD_ASSIGN),
+            InstArithmeticOp::Sub => (&Protocol::SUB, &Protocol::SUB_ASSIGN),
+            InstArithmeticOp::Mul => (&Protocol::MUL, &Protocol::MUL_ASSIGN),
+            InstArithmeticOp::Div => (&Protocol::DIV, &Protocol::DIV_ASSIGN),
+            InstArithmeticOp::Rem => (&Protocol::REM, &Protocol::REM_ASSIGN),
+        };
+
+        let current = vm_try!(self.assign_target(target));
+        let Some(current) = current else {
+            return VmResult::Ok(false);
+        };
+
+        if !matches!(current.as_ref(), Repr::Any(..)) {
+            return VmResult::Ok(false);
+        }
+
+        let type_hash = current.type_hash();
+        let own = Hash::associated_function(type_hash, assign.hash);
+        let through = Hash::associated_function(type_hash, binary.hash);
+
+        if self.context.function(&own).is_some() || self.context.function(&through).is_none() {
+            return VmResult::Ok(false);
+        }
+
+        let operand = self.stack.at(rhs).clone();
+        let mut args = DynGuardedArgs::new((operand,));
+        let result = vm_try!(self.call_protocol_fn(binary, current, &mut args));
+
+        match target {
+            InstTarget::Address(addr) => {
+                *vm_try!(self.stack.at_mut(addr)) = result;
+            }
+            InstTarget::Field(lhs, slot) => {
+                let Some(field) = self.unit.lookup_string(slot) else {
+                    return err(VmErrorKind::MissingStaticString { slot });
+                };
+                if let Some(mut place) = vm_try!(try_object_like_index_get_mut(self.stack.at(lhs), field)) {
+                    *place = result;
+                }
+            }
+            InstTarget::TupleField(lhs, index) => {
+                if let Some(mut place) = vm_try!(try_tuple_like_index_get_mut(self.stack.at(lhs), index)) {
+                    *place = result;
+                }
+            }
+        }
+
+        VmResult::Ok(true)
+    }
+
+    /// The value an assignment target holds now, where it is a place this VM
+    /// can write back to.
+    fn assign_target(&mut self, target: InstTarget) -> VmResult<Option<Value>> {
+        let value = match target {
+            InstTarget::Address(addr) => Some(self.stack.at(addr).clone()),
+            InstTarget::Field(lhs, slot) => {
+                let Some(field) = self.unit.lookup_string(slot) else {
+                    return err(VmErrorKind::MissingStaticString { slot });
+                };
+                vm_try!(try_object_like_index_get_mut(self.stack.at(lhs), field)).map(|v| v.clone())
+            }
+            InstTarget::TupleField(lhs, index) => {
+                vm_try!(try_tuple_like_index_get_mut(self.stack.at(lhs), index)).map(|v| v.clone())
+            }
+        };
+        VmResult::Ok(value)
     }
 
     #[cfg_attr(feature = "bench", inline(never))]
