@@ -563,6 +563,12 @@ impl AnyObj {
         unsafe { self.shared.as_ref().access.is_shared() }
     }
 
+    /// Balaur fork: how many values hold this object.
+    pub(crate) fn strong_count(&self) -> usize {
+        // Safety: holding a reference keeps the shared data alive.
+        unsafe { self.shared.as_ref().count.get() }
+    }
+
     /// Test if the value is exclusively accessible.
     pub(crate) fn is_writable(&self) -> bool {
         unsafe {

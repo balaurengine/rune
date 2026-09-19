@@ -520,6 +520,7 @@ mod unreachable;
 #[cfg(not(miri))]
 mod vm_arithmetic;
 mod vm_ordered_maps;
+mod vm_value_strings;
 #[cfg(not(miri))]
 mod vm_assign_exprs;
 #[cfg(not(miri))]

@@ -1410,7 +1410,7 @@ impl Vm {
         let vec = vm_try!(self.stack.slice_at_mut(addr, count));
         let mut vec = vm_try!(vec.iter_mut().map(take).try_collect::<alloc::Vec<Value>>());
         for value in vec.iter_mut() {
-            *value = vm_try!(self.copied(value.clone()));
+            *value = vm_try!(self.copied(take(value), 1));
         }
         vm_try!(out.store(&mut self.stack, Vec::from(vec)));
         VmResult::Ok(())
@@ -1427,7 +1427,7 @@ impl Vm {
             .try_collect::<alloc::Vec<Value>>());
 
         for value in tuple.iter_mut() {
-            *value = vm_try!(self.copied(value.clone()));
+            *value = vm_try!(self.copied(take(value), 1));
         }
 
         vm_try!(out.store(&mut self.stack, || OwnedTuple::try_from(tuple)));
@@ -1440,8 +1440,9 @@ impl Vm {
         let mut tuple = vm_try!(alloc::Vec::<Value>::try_with_capacity(addr.len()));
 
         for &arg in addr {
+            // Read from any slot, a name's own among them: always copied.
             let value = self.stack.at(arg).clone();
-            let value = vm_try!(self.copied(value));
+            let value = vm_try!(self.copied(value, 0));
             vm_try!(tuple.try_push(value));
         }
 
@@ -1498,11 +1499,30 @@ impl Vm {
     }
 
     #[cfg_attr(feature = "bench", inline(never))]
-    /// Balaur fork: a value type's own copy, anything else as it is. A type is
-    /// a value type when it answers `COPY`.
-    pub(crate) fn copied(&mut self, value: Value) -> VmResult<Value> {
-        if !matches!(value.as_ref(), Repr::Any(..)) {
+    /// Balaur fork: a value type's own copy, anything else as it is. A type
+    /// that answers `COPY` is always copied. A string or a byte buffer is
+    /// copied only when more than `holders` values hold it, so a fresh one
+    /// costs nothing; each caller counts the holders its own read added.
+    pub(crate) fn copied(&mut self, value: Value, holders: usize) -> VmResult<Value> {
+        let Repr::Any(any) = value.as_ref() else {
             return VmResult::Ok(value);
+        };
+        let shared = any.strong_count() > holders;
+        if let Ok(text) = value.borrow_ref::<String>() {
+            if !shared {
+                drop(text);
+                return VmResult::Ok(value);
+            }
+            let copy = vm_try!(text.try_clone());
+            return VmResult::Ok(vm_try!(Value::new(copy)));
+        }
+        if let Ok(bytes) = value.borrow_ref::<Bytes>() {
+            if !shared {
+                drop(bytes);
+                return VmResult::Ok(value);
+            }
+            let copy = vm_try!(bytes.try_clone());
+            return VmResult::Ok(vm_try!(Value::new(copy)));
         }
         let hash = Hash::associated_function(value.type_hash(), Protocol::COPY.hash);
         if self.context.function(&hash).is_none() {
@@ -1517,7 +1537,8 @@ impl Vm {
         for at in skip..count {
             let slot = InstAddress::new(addr.offset() + at);
             let value = self.stack.at(slot).clone();
-            let copy = vm_try!(self.copied(value));
+            // The argument slot and this read.
+            let copy = vm_try!(self.copied(value, 2));
             *vm_try!(self.stack.at_mut(slot)) = copy;
         }
         VmResult::Ok(())
@@ -2143,7 +2164,8 @@ impl Vm {
         value: InstAddress,
     ) -> VmResult<()> {
         let value = self.stack.at(value).clone();
-        let value = &vm_try!(self.copied(value));
+        // Stored from what may be a name's own slot: always copied.
+        let value = &vm_try!(self.copied(value, 0));
         let target = self.stack.at(target);
         let index = self.stack.at(index);
 
@@ -2330,7 +2352,8 @@ impl Vm {
         value: InstAddress,
     ) -> VmResult<()> {
         let value = self.stack.at(value).clone();
-        let value = &vm_try!(self.copied(value));
+        // Stored from what may be a name's own slot: always copied.
+        let value = &vm_try!(self.copied(value, 0));
         let target = self.stack.at(target);
 
         if vm_try!(Self::try_tuple_like_index_set(target, index, value)) {
@@ -2380,7 +2403,8 @@ impl Vm {
         value: InstAddress,
     ) -> VmResult<()> {
         let value = self.stack.at(value).clone();
-        let value = &vm_try!(self.copied(value));
+        // Stored from what may be a name's own slot: always copied.
+        let value = &vm_try!(self.copied(value, 0));
         let target = self.stack.at(target);
 
         let Some(field) = self.unit.lookup_string(slot) else {
@@ -2491,7 +2515,7 @@ impl Vm {
 
         for (key, value) in keys.iter().zip(values) {
             let key = vm_try!(String::try_from(key.as_str()));
-            let value = vm_try!(self.copied(value));
+            let value = vm_try!(self.copied(value, 1));
             vm_try!(object.insert(key, value));
         }
 
@@ -2545,7 +2569,7 @@ impl Vm {
         let values = vm_try!(self.stack.slice_at_mut(addr, rtti.fields.len()));
         let mut values = vm_try!(values.iter_mut().map(take).try_collect::<alloc::Vec<Value>>());
         for value in values.iter_mut() {
-            *value = vm_try!(self.copied(value.clone()));
+            *value = vm_try!(self.copied(take(value), 1));
         }
         let value = vm_try!(Dynamic::new(rtti.clone(), values.into_iter()));
         vm_try!(out.store(&mut self.stack, value));
@@ -3368,7 +3392,8 @@ impl Vm {
                 }
                 Inst::CopyValue { addr } => {
                     let value = self.stack.at(addr).clone();
-                    let copy = vm_try!(self.copied(value));
+                    // The bound name and this read.
+                    let copy = vm_try!(self.copied(value, 2));
                     *vm_try!(self.stack.at_mut(addr)) = copy;
                 }
                 Inst::Move { addr, out } => {
