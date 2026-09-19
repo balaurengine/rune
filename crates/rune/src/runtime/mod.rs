@@ -94,6 +94,7 @@ pub use self::label::DebugLabel;
 pub(crate) use self::label::Label;
 
 pub(crate) mod object;
+pub(crate) mod ordered;
 pub use self::object::Object;
 
 mod panic;
@@ -213,11 +214,6 @@ mod hasher;
 pub use self::hasher::Hasher;
 
 pub(crate) type FieldMap<K, V> = crate::alloc::HashMap<K, V>;
-
-#[inline(always)]
-pub(crate) fn new_field_map<K, V>() -> FieldMap<K, V> {
-    FieldMap::new()
-}
 
 #[inline(always)]
 pub(crate) fn new_field_hash_map_with_capacity<K, V>(

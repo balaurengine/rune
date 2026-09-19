@@ -2,9 +2,8 @@ use core::ptr;
 
 use crate as rune;
 use crate::alloc::fmt::TryWrite;
-use crate::alloc::hashbrown::raw::RawIter;
 use crate::alloc::prelude::*;
-use crate::hashbrown::{IterRef, Table};
+use crate::hashbrown::{IterRef, RawEntries, Table};
 use crate::runtime::{
     EnvProtocolCaller, Formatter, Iterator, ProtocolCaller, RawAnyGuard, Ref, Value, VmResult,
 };
@@ -677,8 +676,8 @@ impl Difference {
 #[rune(item = ::std::collections::hash_set)]
 struct Union {
     this: ptr::NonNull<Table<()>>,
-    this_iter: RawIter<(Value, ())>,
-    other_iter: RawIter<(Value, ())>,
+    this_iter: RawEntries<()>,
+    other_iter: RawEntries<()>,
     _guards: (RawAnyGuard, RawAnyGuard),
 }
 
@@ -688,15 +687,13 @@ impl Union {
         // SAFETY: we're holding onto the ref guards for both collections during
         // iteration, so this is valid for the lifetime of the iterator.
         unsafe {
-            if let Some(bucket) = self.this_iter.next() {
-                let (value, ()) = bucket.as_ref();
+            if let Some((value, ())) = self.this_iter.next() {
                 return VmResult::Ok(Some(value.clone()));
             }
 
             let mut caller = EnvProtocolCaller;
 
-            for bucket in self.other_iter.by_ref() {
-                let (key, ()) = bucket.as_ref();
+            while let Some((key, ())) = self.other_iter.next() {
 
                 if vm_try!(self.this.as_ref().get(key, &mut caller)).is_none() {
                     return VmResult::Ok(Some(key.clone()));

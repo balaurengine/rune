@@ -1,3 +1,7 @@
+//! Balaur fork: entries live in a vector in insertion order, and the hash
+//! table holds only their positions, so a map or set iterates in the order a
+//! script wrote it.
+
 use rune_alloc::hash_map;
 
 use core::hash::BuildHasher;
@@ -8,16 +12,18 @@ use core::ptr;
 
 use crate::alloc;
 use crate::alloc::prelude::*;
+use crate::alloc::Vec;
 
 #[cfg(feature = "alloc")]
 use crate::runtime::Hasher;
 use crate::runtime::{ProtocolCaller, RawAnyGuard, Ref, Value, VmError, VmResult};
 
-use crate::alloc::hashbrown::raw::{RawIter, RawTable};
+use crate::alloc::hashbrown::raw::RawTable;
 use crate::alloc::hashbrown::ErrorOrInsertSlot;
 
 pub(crate) struct Table<V> {
-    table: RawTable<(Value, V)>,
+    entries: Vec<(Value, V)>,
+    table: RawTable<usize>,
     state: hash_map::RandomState,
 }
 
@@ -25,6 +31,7 @@ impl<V> Table<V> {
     #[inline(always)]
     pub(crate) fn new() -> Self {
         Self {
+            entries: Vec::new(),
             table: RawTable::new(),
             state: hash_map::RandomState::new(),
         }
@@ -33,6 +40,7 @@ impl<V> Table<V> {
     #[inline(always)]
     pub(crate) fn try_with_capacity(capacity: usize) -> alloc::Result<Self> {
         Ok(Self {
+            entries: Vec::try_with_capacity(capacity)?,
             table: RawTable::try_with_capacity(capacity)?,
             state: hash_map::RandomState::new(),
         })
@@ -40,7 +48,7 @@ impl<V> Table<V> {
 
     #[inline(always)]
     pub(crate) fn len(&self) -> usize {
-        self.table.len()
+        self.entries.len()
     }
 
     #[inline(always)]
@@ -50,10 +58,10 @@ impl<V> Table<V> {
 
     #[inline(always)]
     pub(crate) fn is_empty(&self) -> bool {
-        self.table.is_empty()
+        self.entries.is_empty()
     }
 
-    #[inline(always)]
+    /// A key already present keeps its place; a new one goes last.
     pub(crate) fn insert_with(
         &mut self,
         key: Value,
@@ -62,23 +70,28 @@ impl<V> Table<V> {
     ) -> VmResult<Option<V>> {
         let hash = vm_try!(hash(&self.state, &key, caller));
 
-        let existing = match self.table.find_or_find_insert_slot(
+        let found = self.table.find_or_find_insert_slot(
             caller,
             hash,
-            KeyEq::new(&key),
-            StateHasher::new(&self.state),
-        ) {
-            Ok(bucket) => Some(mem::replace(unsafe { &mut bucket.as_mut().1 }, value)),
-            Err(ErrorOrInsertSlot::InsertSlot(slot)) => {
-                unsafe {
-                    self.table.insert_in_slot(hash, slot, (key, value));
-                }
-                None
-            }
-            Err(ErrorOrInsertSlot::Error(error)) => return VmResult::err(error),
-        };
+            KeyEq::new(&key, &self.entries),
+            StateHasher::new(&self.state, &self.entries),
+        );
 
-        VmResult::Ok(existing)
+        match found {
+            Ok(bucket) => {
+                let at = unsafe { *bucket.as_ref() };
+                VmResult::Ok(Some(mem::replace(&mut self.entries[at].1, value)))
+            }
+            Err(ErrorOrInsertSlot::InsertSlot(slot)) => {
+                let at = self.entries.len();
+                vm_try!(self.entries.try_push((key, value)));
+                unsafe {
+                    self.table.insert_in_slot(hash, slot, at);
+                }
+                VmResult::Ok(None)
+            }
+            Err(ErrorOrInsertSlot::Error(error)) => VmResult::err(error),
+        }
     }
 
     pub(crate) fn get(
@@ -86,14 +99,16 @@ impl<V> Table<V> {
         key: &Value,
         caller: &mut dyn ProtocolCaller,
     ) -> VmResult<Option<&(Value, V)>> {
-        if self.table.is_empty() {
+        if self.entries.is_empty() {
             return VmResult::Ok(None);
         }
 
         let hash = vm_try!(hash(&self.state, key, caller));
-        VmResult::Ok(vm_try!(self.table.get(caller, hash, KeyEq::new(key))))
+        let at = vm_try!(self.table.get(caller, hash, KeyEq::new(key, &self.entries)));
+        VmResult::Ok(at.map(|&at| &self.entries[at]))
     }
 
+    /// The rest keep their order, so every later position moves down one.
     #[inline(always)]
     pub(crate) fn remove_with(
         &mut self,
@@ -102,23 +117,43 @@ impl<V> Table<V> {
     ) -> VmResult<Option<V>> {
         let hash = vm_try!(hash(&self.state, key, caller));
 
-        match self.table.remove_entry(caller, hash, KeyEq::new(key)) {
-            Ok(value) => VmResult::Ok(value.map(|(_, value)| value)),
-            Err(error) => VmResult::Err(error),
+        let removed = match self
+            .table
+            .remove_entry(caller, hash, KeyEq::new(key, &self.entries))
+        {
+            Ok(removed) => removed,
+            Err(error) => return VmResult::Err(error),
+        };
+
+        let Some(at) = removed else {
+            return VmResult::Ok(None);
+        };
+
+        let (_, value) = self.entries.remove(at);
+
+        // SAFETY: the buckets are read and written while the table is borrowed
+        // mutably, and none are added or removed.
+        unsafe {
+            for bucket in self.table.iter() {
+                let slot = bucket.as_mut();
+                if *slot > at {
+                    *slot -= 1;
+                }
+            }
         }
+
+        VmResult::Ok(Some(value))
     }
 
     #[inline(always)]
     pub(crate) fn clear(&mut self) {
+        self.entries.clear();
         self.table.clear()
     }
 
     pub(crate) fn iter(&self) -> Iter<'_, V> {
-        // SAFETY: lifetime is held by returned iterator.
-        let iter = unsafe { self.table.iter() };
-
         Iter {
-            iter,
+            iter: RawEntries::new(&self.entries),
             _marker: PhantomData,
         }
     }
@@ -128,16 +163,19 @@ impl<V> Table<V> {
         let (this, _guard) = Ref::into_raw(this);
         // SAFETY: Table will be alive and a reference to it held for as long as
         // `RawAnyGuard` is alive.
-        let iter = unsafe { this.as_ref().table.iter() };
+        let iter = unsafe { RawEntries::new(&this.as_ref().entries) };
         IterRef {
             iter,
             guard: _guard,
         }
     }
 
+    /// # Safety
+    ///
+    /// The table must stay borrowed for as long as the entries are walked.
     #[inline(always)]
-    pub(crate) unsafe fn iter_ref_raw(this: ptr::NonNull<Table<V>>) -> RawIter<(Value, V)> {
-        this.as_ref().table.iter()
+    pub(crate) unsafe fn iter_ref_raw(this: ptr::NonNull<Table<V>>) -> RawEntries<V> {
+        RawEntries::new(&this.as_ref().entries)
     }
 
     #[inline(always)]
@@ -145,7 +183,7 @@ impl<V> Table<V> {
         let (this, _guard) = Ref::into_raw(this);
         // SAFETY: Table will be alive and a reference to it held for as long as
         // `RawAnyGuard` is alive.
-        let iter = unsafe { this.as_ref().table.iter() };
+        let iter = unsafe { RawEntries::new(&this.as_ref().entries) };
         KeysRef {
             iter,
             guard: _guard,
@@ -157,7 +195,7 @@ impl<V> Table<V> {
         let (this, _guard) = Ref::into_raw(this);
         // SAFETY: Table will be alive and a reference to it held for as long as
         // `RawAnyGuard` is alive.
-        let iter = unsafe { this.as_ref().table.iter() };
+        let iter = unsafe { RawEntries::new(&this.as_ref().entries) };
         ValuesRef {
             iter,
             guard: _guard,
@@ -171,19 +209,52 @@ where
 {
     fn try_clone(&self) -> alloc::Result<Self> {
         Ok(Self {
+            entries: self.entries.try_clone()?,
             table: self.table.try_clone()?,
             state: self.state.clone(),
         })
     }
+}
 
-    #[inline]
-    fn try_clone_from(&mut self, source: &Self) -> alloc::Result<()> {
-        self.table.try_clone_from(&source.table)
+/// Entries walked by pointer, for iterators that hold the table's borrow
+/// guard instead of a lifetime.
+pub(crate) struct RawEntries<V> {
+    at: *const (Value, V),
+    left: usize,
+}
+
+impl<V> RawEntries<V> {
+    fn new(entries: &[(Value, V)]) -> Self {
+        Self {
+            at: entries.as_ptr(),
+            left: entries.len(),
+        }
+    }
+
+    /// # Safety
+    ///
+    /// The table the entries came from must still be borrowed.
+    pub(crate) unsafe fn next<'a>(&mut self) -> Option<&'a (Value, V)> {
+        if self.left == 0 {
+            return None;
+        }
+        let entry = &*self.at;
+        self.at = self.at.add(1);
+        self.left -= 1;
+        Some(entry)
+    }
+
+    pub(crate) fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.left, Some(self.left))
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.left
     }
 }
 
 pub(crate) struct Iter<'a, V> {
-    iter: RawIter<(Value, V)>,
+    iter: RawEntries<V>,
     _marker: PhantomData<&'a V>,
 }
 
@@ -192,8 +263,8 @@ impl<'a, V> iter::Iterator for Iter<'a, V> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        // SAFETY: we're still holding onto the `RawAnyGuard` guard.
-        unsafe { Some(self.iter.next()?.as_ref()) }
+        // SAFETY: the iterator borrows the table for `'a`.
+        unsafe { self.iter.next() }
     }
 
     #[inline]
@@ -203,7 +274,7 @@ impl<'a, V> iter::Iterator for Iter<'a, V> {
 }
 
 pub(crate) struct IterRef<V> {
-    iter: RawIter<(Value, V)>,
+    iter: RawEntries<V>,
     #[allow(unused)]
     guard: RawAnyGuard,
 }
@@ -217,7 +288,7 @@ where
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         // SAFETY: we're still holding onto the `RawAnyGuard` guard.
-        unsafe { Some(self.iter.next()?.as_ref().clone()) }
+        unsafe { Some(self.iter.next()?.clone()) }
     }
 
     #[inline]
@@ -237,7 +308,7 @@ where
 }
 
 pub(crate) struct KeysRef<V> {
-    iter: RawIter<(Value, V)>,
+    iter: RawEntries<V>,
     #[allow(unused)]
     guard: RawAnyGuard,
 }
@@ -248,7 +319,7 @@ impl<V> iter::Iterator for KeysRef<V> {
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         // SAFETY: we're still holding onto the `RawAnyGuard` guard.
-        unsafe { Some(self.iter.next()?.as_ref().0.clone()) }
+        unsafe { Some(self.iter.next()?.0.clone()) }
     }
 
     #[inline]
@@ -258,7 +329,7 @@ impl<V> iter::Iterator for KeysRef<V> {
 }
 
 pub(crate) struct ValuesRef<V> {
-    iter: RawIter<(Value, V)>,
+    iter: RawEntries<V>,
     #[allow(unused)]
     guard: RawAnyGuard,
 }
@@ -272,7 +343,7 @@ where
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         // SAFETY: we're still holding onto the `RawAnyGuard` guard.
-        unsafe { Some(self.iter.next()?.as_ref().1.clone()) }
+        unsafe { Some(self.iter.next()?.1.clone()) }
     }
 
     #[inline]
@@ -291,40 +362,42 @@ where
     VmResult::Ok(hasher.finish())
 }
 
-struct StateHasher<'a> {
+/// Hashes the key an index points at, when the table grows.
+struct StateHasher<'a, V> {
     state: &'a hash_map::RandomState,
+    entries: &'a [(Value, V)],
 }
 
-impl<'a> StateHasher<'a> {
+impl<'a, V> StateHasher<'a, V> {
     #[inline]
-    fn new(state: &'a hash_map::RandomState) -> Self {
-        Self { state }
+    fn new(state: &'a hash_map::RandomState, entries: &'a [(Value, V)]) -> Self {
+        Self { state, entries }
     }
 }
 
-impl<V> alloc::hashbrown::HasherFn<dyn ProtocolCaller, (Value, V), VmError> for StateHasher<'_> {
+impl<V> alloc::hashbrown::HasherFn<dyn ProtocolCaller, usize, VmError> for StateHasher<'_, V> {
     #[inline]
-    fn hash(&self, cx: &mut dyn ProtocolCaller, (key, _): &(Value, V)) -> Result<u64, VmError> {
-        hash(self.state, key, cx).into_result()
+    fn hash(&self, cx: &mut dyn ProtocolCaller, at: &usize) -> Result<u64, VmError> {
+        hash(self.state, &self.entries[*at].0, cx).into_result()
     }
 }
 
-/// Construct an equality function for a value in the table that will compare an
-/// entry with the current key.
-struct KeyEq<'a> {
+/// Compares the key being looked up with the key an index points at.
+struct KeyEq<'a, V> {
     key: &'a Value,
+    entries: &'a [(Value, V)],
 }
 
-impl<'a> KeyEq<'a> {
+impl<'a, V> KeyEq<'a, V> {
     #[inline]
-    fn new(key: &'a Value) -> Self {
-        Self { key }
+    fn new(key: &'a Value, entries: &'a [(Value, V)]) -> Self {
+        Self { key, entries }
     }
 }
 
-impl<V> alloc::hashbrown::EqFn<dyn ProtocolCaller, (Value, V), VmError> for KeyEq<'_> {
+impl<V> alloc::hashbrown::EqFn<dyn ProtocolCaller, usize, VmError> for KeyEq<'_, V> {
     #[inline]
-    fn eq(&self, cx: &mut dyn ProtocolCaller, (other, _): &(Value, V)) -> Result<bool, VmError> {
-        self.key.eq_with(other, cx).into_result()
+    fn eq(&self, cx: &mut dyn ProtocolCaller, at: &usize) -> Result<bool, VmError> {
+        self.key.eq_with(&self.entries[*at].0, cx).into_result()
     }
 }

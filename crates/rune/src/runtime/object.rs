@@ -5,59 +5,30 @@ use core::hash;
 use core::iter;
 
 use crate as rune;
-use crate::alloc::hash_map;
-use crate::alloc::hashbrown::raw::RawIter;
+use core::slice;
+
 use crate::alloc::prelude::*;
 use crate::alloc::{self, String};
+use crate::runtime::ordered::OrderedMap;
 use crate::runtime::{
-    FieldMap, FromValue, ProtocolCaller, RawAnyGuard, Ref, ToValue, Value, VmError, VmResult,
+    FromValue, ProtocolCaller, RawAnyGuard, Ref, ToValue, Value, VmError, VmResult,
 };
 use crate::Any;
 
-/// An owning iterator over the entries of a `Object`.
-///
-/// This `struct` is created by the [`into_iter`] method on [`Object`]
-/// (provided by the `IntoIterator` trait). See its documentation for more.
-///
-/// [`into_iter`]: struct.Object.html#method.into_iter
-/// [`Object`]: struct.Object.html
-pub type IntoIter = hash_map::IntoIter<String, Value>;
+/// Balaur fork: every iterator below walks the entries in insertion order.
+pub type IntoIter = iter::Map<alloc::vec::IntoIter<(String, Value)>, fn((String, Value)) -> (String, Value)>;
 
-/// A mutable iterator over the entries of a `Object`.
-///
-/// This `struct` is created by the [`iter_mut`] method on [`Object`]. See its
-/// documentation for more.
-///
-/// [`iter_mut`]: struct.Object.html#method.iter_mut
-/// [`Object`]: struct.Object.html
-pub type IterMut<'a> = hash_map::IterMut<'a, String, Value>;
+/// A mutable iterator over the entries of a `Object`, in insertion order.
+pub type IterMut<'a> = iter::Map<slice::IterMut<'a, (String, Value)>, fn(&'a mut (String, Value)) -> (&'a String, &'a mut Value)>;
 
-/// An iterator over the entries of a `Object`.
-///
-/// This `struct` is created by the [`iter`] method on [`Object`]. See its
-/// documentation for more.
-///
-/// [`iter`]: struct.Object.html#method.iter
-/// [`Object`]: struct.Object.html
-pub type Iter<'a> = hash_map::Iter<'a, String, Value>;
+/// An iterator over the entries of a `Object`, in insertion order.
+pub type Iter<'a> = iter::Map<slice::Iter<'a, (String, Value)>, fn(&'a (String, Value)) -> (&'a String, &'a Value)>;
 
-/// An iterator over the keys of a `HashMap`.
-///
-/// This `struct` is created by the [`keys`] method on [`Object`]. See its
-/// documentation for more.
-///
-/// [`keys`]: struct.Object.html#method.keys
-/// [`Object`]: struct.Object.html
-pub type Keys<'a> = hash_map::Keys<'a, String, Value>;
+/// An iterator over the keys of an `Object`, in insertion order.
+pub type Keys<'a> = iter::Map<slice::Iter<'a, (String, Value)>, fn(&'a (String, Value)) -> &'a String>;
 
-/// An iterator over the values of a `HashMap`.
-///
-/// This `struct` is created by the [`values`] method on [`Object`]. See its
-/// documentation for more.
-///
-/// [`values`]: struct.Object.html#method.values
-/// [`Object`]: struct.Object.html
-pub type Values<'a> = hash_map::Values<'a, String, Value>;
+/// An iterator over the values of an `Object`, in insertion order.
+pub type Values<'a> = iter::Map<slice::Iter<'a, (String, Value)>, fn(&'a (String, Value)) -> &'a Value>;
 
 /// Struct representing a dynamic anonymous object.
 ///
@@ -82,7 +53,7 @@ pub type Values<'a> = hash_map::Values<'a, String, Value>;
 #[repr(transparent)]
 #[rune(item = ::std::object)]
 pub struct Object {
-    inner: FieldMap<String, Value>,
+    inner: OrderedMap<String, Value>,
 }
 
 impl Object {
@@ -98,7 +69,7 @@ impl Object {
     #[rune::function(keep, path = Self::new)]
     pub fn new() -> Self {
         Self {
-            inner: crate::runtime::new_field_map(),
+            inner: OrderedMap::default(),
         }
     }
 
@@ -121,7 +92,7 @@ impl Object {
         // BTreeMap doesn't support setting capacity on creation but we keep
         // this here in case we want to switch store later.
         Ok(Self {
-            inner: crate::runtime::new_field_hash_map_with_capacity(capacity)?,
+            inner: OrderedMap::try_with_capacity(capacity)?,
         })
     }
 
@@ -263,19 +234,19 @@ impl Object {
     /// An iterator visiting all key-value pairs in arbitrary order.
     /// The iterator element type is `(&'a String, &'a Value)`.
     pub fn iter(&self) -> Iter<'_> {
-        self.inner.iter()
+        self.inner.entries().iter().map(|(k, v)| (k, v))
     }
 
     /// An iterator visiting all keys in arbitrary order.
     /// The iterator element type is `&'a String`.
     pub fn keys(&self) -> Keys<'_> {
-        self.inner.keys()
+        self.inner.entries().iter().map(|(k, _)| k)
     }
 
     /// An iterator visiting all values in arbitrary order.
     /// The iterator element type is `&'a Value`.
     pub fn values(&self) -> Values<'_> {
-        self.inner.values()
+        self.inner.entries().iter().map(|(_, v)| v)
     }
 
     /// An iterator visiting all key-value pairs in arbitrary order,
@@ -283,7 +254,7 @@ impl Object {
     ///
     /// The iterator element type is `(&'a String, &'a mut Value)`.
     pub fn iter_mut(&mut self) -> IterMut<'_> {
-        self.inner.iter_mut()
+        self.inner.entries_mut().iter_mut().map(|(k, v)| (&*k, v))
     }
 
     /// An iterator visiting all keys and values in arbitrary order.
@@ -305,7 +276,7 @@ impl Object {
     pub fn rune_iter(this: Ref<Self>) -> RuneIter {
         // SAFETY: we're holding onto the related reference guard, and making
         // sure that it's dropped after the iterator.
-        let iter = unsafe { this.inner.raw_table().iter() };
+        let iter = RawEntries::new(this.inner.entries());
         let (_, guard) = Ref::into_raw(this);
         RuneIter { iter, guard }
     }
@@ -329,7 +300,7 @@ impl Object {
     pub fn rune_keys(this: Ref<Self>) -> RuneIterKeys {
         // SAFETY: we're holding onto the related reference guard, and making
         // sure that it's dropped after the iterator.
-        let iter = unsafe { this.inner.raw_table().iter() };
+        let iter = RawEntries::new(this.inner.entries());
         let (_, guard) = Ref::into_raw(this);
         RuneIterKeys { iter, guard }
     }
@@ -353,7 +324,7 @@ impl Object {
     pub fn rune_values(this: Ref<Self>) -> RuneValues {
         // SAFETY: we're holding onto the related reference guard, and making
         // sure that it's dropped after the iterator.
-        let iter = unsafe { this.inner.raw_table().iter() };
+        let iter = RawEntries::new(this.inner.entries());
         let (_, guard) = Ref::into_raw(this);
         RuneValues { iter, guard }
     }
@@ -438,21 +409,21 @@ impl IntoIterator for Object {
     /// pair out of the object in arbitrary order. The object cannot be used
     /// after calling this.
     fn into_iter(self) -> Self::IntoIter {
-        self.inner.into_iter()
+        self.inner.into_entries().into_iter().map(|e| e)
     }
 }
 
 impl fmt::Debug for Object {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_map().entries(self.inner.iter()).finish()
+        f.debug_map().entries(self.iter()).finish()
     }
 }
 
 #[derive(Any)]
 #[rune(item = ::std::object, name = Iter)]
 pub struct RuneIter {
-    iter: RawIter<(String, Value)>,
+    iter: RawEntries,
     #[allow(unused)]
     guard: RawAnyGuard,
 }
@@ -461,11 +432,9 @@ impl RuneIter {
     #[rune::function(instance, keep, protocol = NEXT)]
     pub fn next(&mut self) -> VmResult<Option<(String, Value)>> {
         unsafe {
-            let Some(bucket) = self.iter.next() else {
+            let Some((key, value)) = self.iter.next() else {
                 return VmResult::Ok(None);
             };
-
-            let (key, value) = bucket.as_ref();
             let key = vm_try!(key.try_clone());
             VmResult::Ok(Some((key, value.clone())))
         }
@@ -498,7 +467,7 @@ impl iter::Iterator for RuneIter {
 #[derive(Any)]
 #[rune(item = ::std::object, name = Keys)]
 pub struct RuneIterKeys {
-    iter: RawIter<(String, Value)>,
+    iter: RawEntries,
     #[allow(unused)]
     guard: RawAnyGuard,
 }
@@ -507,11 +476,9 @@ impl RuneIterKeys {
     #[rune::function(instance, keep, protocol = NEXT)]
     pub fn next(&mut self) -> VmResult<Option<String>> {
         unsafe {
-            let Some(bucket) = self.iter.next() else {
+            let Some((key, _)) = self.iter.next() else {
                 return VmResult::Ok(None);
             };
-
-            let (key, _) = bucket.as_ref();
             let key = vm_try!(key.try_clone());
             VmResult::Ok(Some(key))
         }
@@ -544,7 +511,7 @@ impl iter::Iterator for RuneIterKeys {
 #[derive(Any)]
 #[rune(item = ::std::object, name = Values)]
 pub struct RuneValues {
-    iter: RawIter<(String, Value)>,
+    iter: RawEntries,
     #[allow(unused)]
     guard: RawAnyGuard,
 }
@@ -553,11 +520,9 @@ impl RuneValues {
     #[rune::function(instance, keep, protocol = NEXT)]
     pub fn next(&mut self) -> VmResult<Option<Value>> {
         unsafe {
-            let Some(bucket) = self.iter.next() else {
+            let Some((_, value)) = self.iter.next() else {
                 return VmResult::Ok(None);
             };
-
-            let (_, value) = bucket.as_ref();
             VmResult::Ok(Some(value.clone()))
         }
     }
@@ -583,5 +548,42 @@ impl iter::Iterator for RuneValues {
             VmResult::Ok(None) => None,
             VmResult::Err(err) => Some(Err(err)),
         }
+    }
+}
+
+/// The entries a script iterator walks. The object stays borrowed through the
+/// iterator's guard, so the slice cannot move under it.
+struct RawEntries {
+    at: *const (String, Value),
+    left: usize,
+}
+
+impl RawEntries {
+    fn new(entries: &[(String, Value)]) -> Self {
+        Self {
+            at: entries.as_ptr(),
+            left: entries.len(),
+        }
+    }
+
+    /// # Safety
+    ///
+    /// The object the entries came from must still be borrowed.
+    unsafe fn next<'a>(&mut self) -> Option<&'a (String, Value)> {
+        if self.left == 0 {
+            return None;
+        }
+        let entry = &*self.at;
+        self.at = self.at.add(1);
+        self.left -= 1;
+        Some(entry)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.left, Some(self.left))
+    }
+
+    fn len(&self) -> usize {
+        self.left
     }
 }

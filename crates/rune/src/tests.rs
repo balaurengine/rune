@@ -519,6 +519,7 @@ mod unit_constants;
 mod unreachable;
 #[cfg(not(miri))]
 mod vm_arithmetic;
+mod vm_ordered_maps;
 #[cfg(not(miri))]
 mod vm_assign_exprs;
 #[cfg(not(miri))]
