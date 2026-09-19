@@ -438,6 +438,14 @@ impl FromValue for f64 {
     }
 }
 
+/// Balaur fork: a float field of a derived constant.
+impl FromConstValue for f64 {
+    #[inline]
+    fn from_const_value(value: ConstValue) -> Result<Self, RuntimeError> {
+        value.as_float()
+    }
+}
+
 impl FromValue for f32 {
     #[inline]
     fn from_value(value: Value) -> Result<Self, RuntimeError> {

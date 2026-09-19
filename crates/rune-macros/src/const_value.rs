@@ -40,6 +40,7 @@ impl Derive {
         let Tokens {
             const_value,
             from_const_value_t,
+            try_clone,
             to_const_value_t,
             type_hash_t,
             from_value,
@@ -84,8 +85,10 @@ impl Derive {
                             <#ty as #to_const_value_t>::to_const_value(self.#member)?
                         });
 
+                        // Balaur fork: `const_construct` hands the fields by
+                        // reference, and a field takes its value owned.
                         from_const_fields.push(quote! {
-                            <#ty as #from_const_value_t>::from_const_value(#var)?
+                            <#ty as #from_const_value_t>::from_const_value(#try_clone::try_clone(#var)?)?
                         });
 
                         from_value_fields.push(quote! {
