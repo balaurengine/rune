@@ -1070,6 +1070,13 @@ pub enum Inst {
         #[inst_display(display_with = PanicReason::ident)]
         reason: PanicReason,
     },
+    /// Balaur fork: replace the value at `addr` with its copy when its type
+    /// is a value type, so a name just bound shares it with nothing.
+    #[musli(packed)]
+    CopyValue {
+        /// Address of the value just bound.
+        addr: InstAddress,
+    },
 }
 
 impl Inst {

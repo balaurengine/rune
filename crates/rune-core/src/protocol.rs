@@ -306,6 +306,14 @@ define! {
         /// Allows the unary `-` operator to apply to values of this type.
     };
 
+    /// Balaur fork: the copy a value type hands out whenever it is bound to a
+    /// name or stored, so two names never share one value.
+    pub const COPY: Protocol = Protocol {
+        hash: 0x2d7c5b1e8a46f093u64,
+        repr: "let $out = copy($value)",
+        /// Makes the type a value type: bound or stored, it is copied.
+    };
+
     /// The function to implement for the bitwise and operation.
     pub const BIT_AND: Protocol = Protocol {
         hash: 0x0e11f20d940eebe8u64,

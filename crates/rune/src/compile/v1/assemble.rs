@@ -68,9 +68,31 @@ pub(crate) struct Ctxt<'a, 'hir, 'arena> {
     pub(crate) select_branches: Vec<(Label, &'hir hir::ExprSelectBranch<'hir>)>,
     /// Values to drop.
     pub(crate) drop: Vec<InstAddress>,
+    /// Balaur fork: parameter copies held back to the start of the body, so
+    /// the signature's line has no instruction for a debugger to stop on.
+    pub(crate) deferred_copies: Option<Vec<InstAddress>>,
 }
 
 impl<'hir> Ctxt<'_, 'hir, '_> {
+    /// Balaur fork: give a freshly bound name its own copy of a value type.
+    fn copy_binding(&mut self, addr: InstAddress, span: &dyn Spanned) -> compile::Result<()> {
+        if let Some(deferred) = &mut self.deferred_copies {
+            deferred.try_push(addr).with_span(span)?;
+            return Ok(());
+        }
+        self.asm.push(Inst::CopyValue { addr }, span)?;
+        Ok(())
+    }
+
+    /// Balaur fork: emit the parameter copies held back while the arguments
+    /// were bound.
+    fn flush_copies(&mut self, span: &dyn Spanned) -> compile::Result<()> {
+        for addr in self.deferred_copies.take().unwrap_or_default() {
+            self.asm.push(Inst::CopyValue { addr }, span)?;
+        }
+        Ok(())
+    }
+
     fn drop_dangling(&mut self, span: &dyn Spanned) -> compile::Result<()> {
         self.scopes
             .drain_dangling_into(&mut self.drop)
@@ -219,6 +241,7 @@ pub(crate) fn fn_from_item_fn<'hir>(
     let mut first = true;
 
     let mut arguments = cx.scopes.linear(hir, hir.args.len())?;
+    cx.deferred_copies = Some(Vec::new());
 
     for (arg, needs) in hir.args.iter().zip(&mut arguments) {
         match arg {
@@ -239,6 +262,13 @@ pub(crate) fn fn_from_item_fn<'hir>(
         }
 
         first = false;
+    }
+
+    // On the body's first statement's line, where a debugger already stops.
+    match (hir.body.statements.first(), hir.body.value) {
+        (Some(stmt), _) => cx.flush_copies(stmt)?,
+        (None, Some(expr)) => cx.flush_copies(expr)?,
+        (None, None) => cx.flush_copies(&hir.body)?,
     }
 
     if hir.body.value.is_some() {
@@ -299,6 +329,8 @@ pub(crate) fn expr_closure_secondary<'hir>(
         }
     }
 
+    cx.deferred_copies = Some(Vec::new());
+
     for (arg, needs) in hir.args.iter().zip(&mut arguments) {
         match arg {
             hir::FnArg::SelfValue(span, _) => {
@@ -313,6 +345,8 @@ pub(crate) fn expr_closure_secondary<'hir>(
             }
         }
     }
+
+    cx.flush_copies(hir.body)?;
 
     // A block body shares the closure's scope, as a function's does: its own
     // scope would drop a returned local before the return reads it.
@@ -459,6 +493,8 @@ fn pat_binding_with<'a, 'hir>(
 
     for (name, needs) in names.iter().copied().zip(linear.iter()) {
         cx.scopes.define(needs.span(), name, needs)?;
+        // Balaur fork: a name bound to a value type holds its own copy.
+        cx.copy_binding(needs.addr(), span)?;
     }
 
     Ok(asm)
@@ -496,6 +532,8 @@ fn pat_binding_with_single<'a, 'hir>(
     };
 
     cx.scopes.define(needs.span(), name, addr)?;
+    // Balaur fork: a name bound to a value type holds its own copy.
+    cx.copy_binding(addr.addr(), span)?;
     Ok(asm)
 }
 
@@ -1351,6 +1389,8 @@ fn expr_assign<'a, 'hir>(
             let mut needs = Address::assigned(var.span, cx.scopes, var.addr);
             converge!(expr(cx, &hir.rhs, &mut needs)?, free(needs));
             needs.free()?;
+            // Balaur fork: `x = y` gives `x` its own copy of a value type.
+            cx.asm.push(Inst::CopyValue { addr: var.addr }, span)?;
             true
         }
         // <expr>.<field> = <value>

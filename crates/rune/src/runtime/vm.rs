@@ -1408,7 +1408,10 @@ impl Vm {
     #[cfg_attr(feature = "bench", inline(never))]
     fn op_vec(&mut self, addr: InstAddress, count: usize, out: Output) -> VmResult<()> {
         let vec = vm_try!(self.stack.slice_at_mut(addr, count));
-        let vec = vm_try!(vec.iter_mut().map(take).try_collect::<alloc::Vec<Value>>());
+        let mut vec = vm_try!(vec.iter_mut().map(take).try_collect::<alloc::Vec<Value>>());
+        for value in vec.iter_mut() {
+            *value = vm_try!(self.copied(value.clone()));
+        }
         vm_try!(out.store(&mut self.stack, Vec::from(vec)));
         VmResult::Ok(())
     }
@@ -1418,10 +1421,14 @@ impl Vm {
     fn op_tuple(&mut self, addr: InstAddress, count: usize, out: Output) -> VmResult<()> {
         let tuple = vm_try!(self.stack.slice_at_mut(addr, count));
 
-        let tuple = vm_try!(tuple
+        let mut tuple = vm_try!(tuple
             .iter_mut()
             .map(take)
             .try_collect::<alloc::Vec<Value>>());
+
+        for value in tuple.iter_mut() {
+            *value = vm_try!(self.copied(value.clone()));
+        }
 
         vm_try!(out.store(&mut self.stack, || OwnedTuple::try_from(tuple)));
         VmResult::Ok(())
@@ -1434,6 +1441,7 @@ impl Vm {
 
         for &arg in addr {
             let value = self.stack.at(arg).clone();
+            let value = vm_try!(self.copied(value));
             vm_try!(tuple.try_push(value));
         }
 
@@ -1490,6 +1498,31 @@ impl Vm {
     }
 
     #[cfg_attr(feature = "bench", inline(never))]
+    /// Balaur fork: a value type's own copy, anything else as it is. A type is
+    /// a value type when it answers `COPY`.
+    pub(crate) fn copied(&mut self, value: Value) -> VmResult<Value> {
+        if !matches!(value.as_ref(), Repr::Any(..)) {
+            return VmResult::Ok(value);
+        }
+        let hash = Hash::associated_function(value.type_hash(), Protocol::COPY.hash);
+        if self.context.function(&hash).is_none() {
+            return VmResult::Ok(value);
+        }
+        self.call_protocol_fn(&Protocol::COPY, value, &mut ())
+    }
+
+    /// Balaur fork: the arguments a native function is about to keep, each a
+    /// copy. `skip` leaves the receiver shared, so a setter writes in place.
+    fn copy_arguments(&mut self, addr: InstAddress, count: usize, skip: usize) -> VmResult<()> {
+        for at in skip..count {
+            let slot = InstAddress::new(addr.offset() + at);
+            let value = self.stack.at(slot).clone();
+            let copy = vm_try!(self.copied(value));
+            *vm_try!(self.stack.at_mut(slot)) = copy;
+        }
+        VmResult::Ok(())
+    }
+
     fn op_neg(&mut self, addr: InstAddress, out: Output) -> VmResult<()> {
         let value = self.stack.at(addr);
 
@@ -2109,9 +2142,10 @@ impl Vm {
         index: InstAddress,
         value: InstAddress,
     ) -> VmResult<()> {
+        let value = self.stack.at(value).clone();
+        let value = &vm_try!(self.copied(value));
         let target = self.stack.at(target);
         let index = self.stack.at(index);
-        let value = self.stack.at(value);
 
         if let Some(field) = vm_try!(index.try_borrow_ref::<String>()) {
             if vm_try!(Self::try_object_slot_index_set(target, &field, value)) {
@@ -2295,7 +2329,8 @@ impl Vm {
         index: usize,
         value: InstAddress,
     ) -> VmResult<()> {
-        let value = self.stack.at(value);
+        let value = self.stack.at(value).clone();
+        let value = &vm_try!(self.copied(value));
         let target = self.stack.at(target);
 
         if vm_try!(Self::try_tuple_like_index_set(target, index, value)) {
@@ -2344,8 +2379,9 @@ impl Vm {
         slot: usize,
         value: InstAddress,
     ) -> VmResult<()> {
+        let value = self.stack.at(value).clone();
+        let value = &vm_try!(self.copied(value));
         let target = self.stack.at(target);
-        let value = self.stack.at(value);
 
         let Some(field) = self.unit.lookup_string(slot) else {
             return err(VmErrorKind::MissingStaticString { slot });
@@ -2444,16 +2480,19 @@ impl Vm {
     /// Operation to allocate an object.
     #[cfg_attr(feature = "bench", inline(never))]
     fn op_object(&mut self, addr: InstAddress, slot: usize, out: Output) -> VmResult<()> {
-        let Some(keys) = self.unit.lookup_object_keys(slot) else {
+        let unit = self.unit.clone();
+        let Some(keys) = unit.lookup_object_keys(slot) else {
             return err(VmErrorKind::MissingStaticObjectKeys { slot });
         };
 
         let mut object = vm_try!(Object::with_capacity(keys.len()));
         let values = vm_try!(self.stack.slice_at_mut(addr, keys.len()));
+        let values = vm_try!(values.iter_mut().map(take).try_collect::<alloc::Vec<Value>>());
 
         for (key, value) in keys.iter().zip(values) {
             let key = vm_try!(String::try_from(key.as_str()));
-            vm_try!(object.insert(key, take(value)));
+            let value = vm_try!(self.copied(value));
+            vm_try!(object.insert(key, value));
         }
 
         vm_try!(out.store(&mut self.stack, object));
@@ -2498,12 +2537,17 @@ impl Vm {
     /// Operation to allocate an object struct.
     #[cfg_attr(feature = "bench", inline(never))]
     fn op_struct(&mut self, addr: InstAddress, hash: Hash, out: Output) -> VmResult<()> {
-        let Some(rtti) = self.unit.lookup_rtti(&hash) else {
+        let unit = self.unit.clone();
+        let Some(rtti) = unit.lookup_rtti(&hash) else {
             return err(VmErrorKind::MissingRtti { hash });
         };
 
         let values = vm_try!(self.stack.slice_at_mut(addr, rtti.fields.len()));
-        let value = vm_try!(Dynamic::new(rtti.clone(), values.iter_mut().map(take)));
+        let mut values = vm_try!(values.iter_mut().map(take).try_collect::<alloc::Vec<Value>>());
+        for value in values.iter_mut() {
+            *value = vm_try!(self.copied(value.clone()));
+        }
+        let value = vm_try!(Dynamic::new(rtti.clone(), values.into_iter()));
         vm_try!(out.store(&mut self.stack, value));
         VmResult::Ok(())
     }
@@ -2977,10 +3021,12 @@ impl Vm {
     #[cfg_attr(feature = "bench", inline(never))]
     fn op_call(&mut self, hash: Hash, addr: InstAddress, args: usize, out: Output) -> VmResult<()> {
         let Some(info) = self.unit.function(&hash) else {
-            let Some(handler) = self.context.function(&hash) else {
+            let context = self.context.clone();
+            let Some(handler) = context.function(&hash) else {
                 return err(VmErrorKind::MissingFunction { hash });
             };
 
+            vm_try!(self.copy_arguments(addr, args, 0));
             vm_try!(handler(&mut self.stack, addr, args, out));
             return VmResult::Ok(());
         };
@@ -3050,8 +3096,10 @@ impl Vm {
         let type_hash = instance.type_hash();
         let hash = Hash::associated_function(type_hash, hash);
 
-        if let Some(handler) = self.context.function(&hash) {
+        let context = self.context.clone();
+        if let Some(handler) = context.function(&hash) {
             vm_try!(self.called_function_hook(hash));
+            vm_try!(self.copy_arguments(addr, args, 1));
             vm_try!(handler(&mut self.stack, addr, args, out));
             return VmResult::Ok(());
         }
@@ -3317,6 +3365,11 @@ impl Vm {
                 }
                 Inst::Copy { addr, out } => {
                     vm_try!(self.op_copy(addr, out));
+                }
+                Inst::CopyValue { addr } => {
+                    let value = self.stack.at(addr).clone();
+                    let copy = vm_try!(self.copied(value));
+                    *vm_try!(self.stack.at_mut(addr)) = copy;
                 }
                 Inst::Move { addr, out } => {
                     vm_try!(self.op_move(addr, out));

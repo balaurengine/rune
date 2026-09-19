@@ -139,6 +139,7 @@ impl<'arena> CompileBuildEntry<'_, 'arena> {
             options: self.options,
             select_branches: Vec::new(),
             drop: Vec::new(),
+            deferred_copies: None,
         })
     }
 
