@@ -1254,8 +1254,8 @@ fn const_<'a, 'hir>(
         ConstValueKind::Object(ref object) => {
             let mut linear = cx.scopes.linear(span, object.len())?;
 
-            let mut entries = object.iter().try_collect::<Vec<_>>()?;
-            entries.sort_by_key(|k| k.0);
+            // The keys keep the order they were written in, as an object does.
+            let entries = object.iter().try_collect::<Vec<_>>()?;
 
             for ((_, value), needs) in entries.iter().copied().zip(&mut linear) {
                 const_(cx, value, span, needs)?;
@@ -1263,7 +1263,7 @@ fn const_<'a, 'hir>(
 
             let slot =
                 cx.q.unit
-                    .new_static_object_keys_iter(span, entries.iter().map(|e| e.0))?;
+                    .new_static_object_keys_iter(span, entries.iter().map(|e| &e.0))?;
 
             cx.asm.push(
                 Inst::Object {

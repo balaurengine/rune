@@ -18,6 +18,7 @@ use crate::hash;
 use crate::query::QueryInner;
 use crate::runtime::debug::{DebugArgs, DebugSignature};
 use crate::runtime::unit::UnitEncoder;
+use crate::runtime::ordered::OrderedMap;
 use crate::runtime::{
     Call, ConstValue, DebugInfo, DebugInst, Inst, InstAddress, Label, Protocol, Rtti, RttiKind,
     StaticString, Unit, UnitFn,
@@ -94,7 +95,7 @@ pub(crate) struct UnitBuilder {
     /// what a script exposes without being told the names first: the unit's
     /// constants are keyed by hash, and a hash cannot be walked back to a
     /// name.
-    exports: HashMap<alloc::String, ConstValue>,
+    exports: OrderedMap<alloc::String, ConstValue>,
 }
 
 impl UnitBuilder {

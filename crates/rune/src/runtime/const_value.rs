@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use crate as rune;
 use crate::alloc::prelude::*;
-use crate::alloc::{self, HashMap};
+use crate::alloc;
+use crate::runtime::ordered::OrderedMap;
 use crate::runtime;
 use crate::{Hash, TypeHash};
 
@@ -119,8 +120,8 @@ pub(crate) enum ConstValueKind {
     Vec(Vec<ConstValue>),
     /// An anonymous tuple.
     Tuple(Box<[ConstValue]>),
-    /// An anonymous object.
-    Object(HashMap<String, ConstValue>),
+    /// An anonymous object, in the order its keys were written.
+    Object(OrderedMap<String, ConstValue>),
     /// An option.
     Option(Option<Box<ConstValue>>),
     /// A struct with the given type.
@@ -157,7 +158,7 @@ pub struct ConstValue {
 
 impl ConstValue {
     /// The fields of an anonymous object, or `None` for any other constant.
-    pub(crate) fn as_object(&self) -> Option<&HashMap<String, ConstValue>> {
+    pub(crate) fn as_object(&self) -> Option<&OrderedMap<String, ConstValue>> {
         match &self.kind {
             ConstValueKind::Object(fields) => Some(fields),
             _ => None,
@@ -181,7 +182,7 @@ impl ConstValue {
     }
 
     /// Construct a new anonymous object constant value.
-    pub fn object(fields: HashMap<String, ConstValue>) -> ConstValue {
+    pub(crate) fn object(fields: OrderedMap<String, ConstValue>) -> ConstValue {
         ConstValue {
             kind: ConstValueKind::Object(fields),
         }
@@ -311,7 +312,7 @@ impl ConstValue {
                 }
                 Object::HASH => {
                     let object = value.borrow_ref::<Object>()?;
-                    let mut const_object = HashMap::try_with_capacity(object.len())?;
+                    let mut const_object = OrderedMap::try_with_capacity(object.len())?;
 
                     for (key, value) in object.iter() {
                         let key = key.try_clone()?;
@@ -373,7 +374,7 @@ impl ConstValue {
             ConstValueKind::Object(object) => {
                 let mut o = Object::with_capacity(object.len())?;
 
-                for (key, value) in object {
+                for (key, value) in object.iter() {
                     let key = key.try_clone()?;
                     let value = Self::to_value_with(value, cx)?;
                     o.insert(key, value)?;

@@ -17,8 +17,8 @@ use crate::item::IntoComponent;
 use crate::macros::{MacroContext, TokenStream};
 use crate::module::DocFunction;
 use crate::runtime::{
-    AnyTypeInfo, ConstConstruct, InstAddress, MaybeTypeOf, Memory, Output, Protocol, ToConstValue,
-    TypeHash, TypeOf, VmResult,
+    AnyTypeInfo, ConstConstruct, ConstValue, InstAddress, MaybeTypeOf, Memory, Output, Protocol,
+    ToConstValue, TypeHash, TypeOf, VmResult,
 };
 use crate::{Hash, Item, ItemBuf};
 
@@ -381,6 +381,45 @@ impl Module {
             name,
             value,
         }
+    }
+
+    /// Insert a free constant whose value is already a [`ConstValue`].
+    ///
+    /// Balaur fork: a host mounting a script's constants holds the value and
+    /// no Rust type, so `constant`'s `TypeOf` bound cannot be met and there
+    /// is no `ConstConstruct` to register.
+    pub fn constant_value<N>(
+        &mut self,
+        name: N,
+        value: ConstValue,
+    ) -> Result<ItemMut<'_>, ContextError>
+    where
+        N: IntoComponent,
+    {
+        let item = self.item.join([name])?;
+        let hash = Hash::type_hash(&item);
+
+        if !self.names.try_insert(Name::Item(hash))? {
+            return Err(ContextError::ConflictingConstantName { item, hash });
+        }
+
+        self.items.try_push(ModuleItem {
+            item,
+            hash,
+            common: ModuleItemCommon {
+                docs: Docs::EMPTY,
+                deprecated: None,
+            },
+            kind: ModuleItemKind::Constant(value),
+        })?;
+
+        let c = self.items.last_mut().unwrap();
+
+        Ok(ItemMut {
+            docs: &mut c.common.docs,
+            #[cfg(feature = "doc")]
+            deprecated: &mut c.common.deprecated,
+        })
     }
 
     pub(super) fn insert_constant<N, V>(

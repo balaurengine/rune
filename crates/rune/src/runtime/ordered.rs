@@ -132,3 +132,74 @@ where
         })
     }
 }
+
+impl<K, V> core::fmt::Debug for OrderedMap<K, V>
+where
+    K: core::fmt::Debug,
+    V: core::fmt::Debug,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_map()
+            .entries(self.entries.iter().map(|(k, v)| (k, v)))
+            .finish()
+    }
+}
+
+/// Written as its entries, so the order survives a round trip.
+impl<K, V> serde::Serialize for OrderedMap<K, V>
+where
+    K: serde::Serialize,
+    V: serde::Serialize,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(Some(self.entries.len()))?;
+        for (key, value) in self.entries.iter() {
+            seq.serialize_element(&(key, value))?;
+        }
+        seq.end()
+    }
+}
+
+impl<'de, K, V> serde::Deserialize<'de> for OrderedMap<K, V>
+where
+    K: serde::Deserialize<'de> + Hash + Eq + TryClone,
+    V: serde::Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_seq(EntriesVisitor(core::marker::PhantomData))
+    }
+}
+
+struct EntriesVisitor<K, V>(core::marker::PhantomData<(K, V)>);
+
+impl<'de, K, V> serde::de::Visitor<'de> for EntriesVisitor<K, V>
+where
+    K: serde::Deserialize<'de> + Hash + Eq + TryClone,
+    V: serde::Deserialize<'de>,
+{
+    type Value = OrderedMap<K, V>;
+
+    fn expecting(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("a sequence of key and value pairs")
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: serde::de::SeqAccess<'de>,
+    {
+        use serde::de::Error as _;
+        let mut map = OrderedMap::try_with_capacity(seq.size_hint().unwrap_or_default())
+            .map_err(A::Error::custom)?;
+        while let Some((key, value)) = seq.next_element::<(K, V)>()? {
+            map.try_insert(key, value).map_err(A::Error::custom)?;
+        }
+        Ok(map)
+    }
+}

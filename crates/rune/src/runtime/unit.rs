@@ -215,7 +215,7 @@ impl<S> Unit<S> {
             return Ok(out);
         };
 
-        for (name, entry) in fields {
+        for (name, entry) in fields.iter() {
             let Some([kind, value]) = entry.as_tuple() else {
                 continue;
             };
