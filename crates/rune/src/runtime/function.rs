@@ -206,7 +206,10 @@ impl Function {
     }
 
     /// Create a function pointer from a handler.
-    pub(crate) fn from_handler(handler: Arc<FunctionHandler>, hash: Hash) -> Self {
+    ///
+    /// Balaur fork: public, so a host can hand a script a function of any
+    /// arity. The typed `new` stops at five, where its permutations end.
+    pub fn from_handler(handler: Arc<FunctionHandler>, hash: Hash) -> Self {
         Self(FunctionImpl::from_handler(handler, hash))
     }
 

@@ -125,8 +125,7 @@ pub(crate) mod range;
 pub use self::range::Range;
 
 mod runtime_context;
-pub(crate) use self::runtime_context::FunctionHandler;
-pub use self::runtime_context::RuntimeContext;
+pub use self::runtime_context::{FunctionHandler, RuntimeContext};
 
 mod select;
 pub(crate) use self::select::Select;

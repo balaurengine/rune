@@ -9,7 +9,8 @@ use crate::runtime::{ConstConstruct, ConstValue, InstAddress, Memory, Output, Vm
 use crate::Hash;
 
 /// A type-reduced function handler.
-pub(crate) type FunctionHandler =
+/// Balaur fork: public, so a host can build a function of any arity.
+pub type FunctionHandler =
     dyn Fn(&mut dyn Memory, InstAddress, usize, Output) -> VmResult<()> + Send + Sync;
 
 /// Static run context visible to the virtual machine.
