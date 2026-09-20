@@ -3003,12 +3003,13 @@ impl Vm {
         count: usize,
         out: Output,
     ) -> VmResult<()> {
+        let unit = self.unit.clone();
         let Some(UnitFn::Offset {
             offset,
             call,
             args,
             captures: Some(captures),
-        }) = self.unit.function(&hash)
+        }) = unit.function(&hash)
         else {
             return err(VmErrorKind::MissingFunction { hash });
         };
@@ -3020,11 +3021,18 @@ impl Vm {
             });
         }
 
-        let environment = vm_try!(self.stack.slice_at(addr, count));
-        let environment = vm_try!(environment
-            .iter()
-            .cloned()
+        let environment = vm_try!(self.stack.slice_at_mut(addr, count));
+        let mut environment = vm_try!(environment
+            .iter_mut()
+            .map(take)
             .try_collect::<alloc::Vec<Value>>());
+
+        // Balaur fork: the closure keeps what it captured, so a value type is
+        // captured by value, as a Godot lambda captures one.
+        for value in environment.iter_mut() {
+            *value = vm_try!(self.copied(take(value), 1));
+        }
+
         let environment = vm_try!(environment.try_into_boxed_slice());
 
         let function = Function::from_vm_closure(

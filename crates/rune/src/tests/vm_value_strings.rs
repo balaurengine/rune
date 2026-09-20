@@ -50,3 +50,16 @@ fn a_string_built_in_a_loop_keeps_every_append() {
     );
     assert_eq!(out, 1000);
 }
+
+#[test]
+fn a_closure_captures_a_string_by_value() {
+    let out: String = eval(
+        r#"
+        let a = "hi";
+        let f = || a;
+        a += "!";
+        `${f()}${a}`
+        "#,
+    );
+    assert_eq!(out, "hihi!");
+}
