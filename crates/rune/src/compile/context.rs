@@ -482,6 +482,12 @@ impl Context {
         })
     }
 
+    /// Balaur fork: every item the context declares, for a host writing its
+    /// own reference: a type's associated functions and constants included.
+    pub fn iter_items(&self) -> impl Iterator<Item = &ContextMeta> {
+        self.meta.iter()
+    }
+
     /// Iterate over all available types in the [Context].
     #[cfg(feature = "cli")]
     pub(crate) fn iter_types(&self) -> impl Iterator<Item = (Hash, &Item)> {
