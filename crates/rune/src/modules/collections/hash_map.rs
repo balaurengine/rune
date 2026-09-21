@@ -161,7 +161,7 @@ impl HashMap {
     /// let map = HashMap::new();
     /// ```
     #[rune::function(keep, path = Self::new)]
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             table: Table::new(),
         }
@@ -262,7 +262,7 @@ impl HashMap {
     /// assert_eq!(map[37], "c");
     /// ```
     #[rune::function(keep)]
-    pub(crate) fn insert(&mut self, key: Value, value: Value) -> VmResult<Option<Value>> {
+    pub fn insert(&mut self, key: Value, value: Value) -> VmResult<Option<Value>> {
         let mut caller = EnvProtocolCaller;
         self.table.insert_with(key, value, &mut caller)
     }

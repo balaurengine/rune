@@ -228,6 +228,26 @@ impl<S> Unit<S> {
         Ok(out)
     }
 
+    /// Build the struct `path` declares, from its fields by name.
+    ///
+    /// For a host reading a script's own type back from plain data. `None`
+    /// where the unit declares no struct by that path; a field the struct
+    /// has and the caller left out is unset, which the caller must not do.
+    pub fn new_struct(&self, path: &str, fields: &[(&str, Value)]) -> Option<Value> {
+        let segments = path.split("::").collect::<::rust_alloc::vec::Vec<_>>();
+        let rtti = self.lookup_rtti(&Hash::type_hash(&segments[..]))?;
+        if !matches!(rtti.kind, crate::runtime::RttiKind::Struct) {
+            return None;
+        }
+        let mut data = ::rust_alloc::vec::Vec::new();
+        data.resize(rtti.fields.len(), Value::unit());
+        for (name, value) in fields {
+            let index = *rtti.fields.get(*name)?;
+            *data.get_mut(index)? = value.clone();
+        }
+        Value::tuple_struct(rtti.clone(), data).ok()
+    }
+
     /// Iterate over all constants in the unit.
     #[cfg(feature = "cli")]
     #[inline]

@@ -535,6 +535,28 @@ impl Value {
         Ok(Value::from(Dynamic::new(rtti, data)?))
     }
 
+    /// The item path of a struct declared in script, and its fields by name.
+    ///
+    /// For a host that writes a script's own type out as plain data and reads
+    /// it back: nothing outside this crate can otherwise see inside a dynamic
+    /// struct, and serialization refuses one.
+    pub fn struct_parts(&self) -> Option<(::rust_alloc::string::String, ::rust_alloc::vec::Vec<(::rust_alloc::string::String, Value)>)> {
+        let Repr::Dynamic(value) = &self.repr else {
+            return None;
+        };
+        let rtti = value.rtti();
+        if !matches!(rtti.kind, RttiKind::Struct) {
+            return None;
+        }
+        let data = value.borrow_ref().ok()?;
+        let mut fields = ::rust_alloc::vec::Vec::new();
+        for (name, index) in rtti.fields.iter() {
+            let held = data.get(*index)?.clone();
+            fields.push((::rust_alloc::string::String::from(name.as_ref()), held));
+        }
+        Some((::rust_alloc::format!("{}", rtti.item), fields))
+    }
+
     /// Drop the interior value.
     pub(crate) fn drop(self) -> VmResult<()> {
         match self.repr {
