@@ -538,6 +538,8 @@ mod vm_function;
 #[cfg(not(miri))]
 mod vm_function_pointers;
 #[cfg(not(miri))]
+mod vm_profile;
+#[cfg(not(miri))]
 mod vm_general;
 #[cfg(not(miri))]
 mod vm_literals;

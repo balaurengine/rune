@@ -178,6 +178,9 @@ pub use self::vec_tuple::VecTuple;
 mod halt;
 pub use self::halt::HaltSet;
 
+#[cfg(feature = "std")]
+pub mod profile;
+
 mod vm;
 use self::vm::CallResultOnly;
 pub use self::vm::{CallFrame, Isolated, Vm};

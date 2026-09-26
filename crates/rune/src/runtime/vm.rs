@@ -3272,6 +3272,12 @@ impl Vm {
 
             self.instructions = self.instructions.wrapping_add(1);
 
+            // Balaur fork: per-function counts for a host's profiler.
+            #[cfg(feature = "std")]
+            if runtime::profile::profiling() {
+                runtime::profile::record(&self.unit, self.ip);
+            }
+
             let Some((inst, inst_len)) = vm_try!(self.unit.instruction_at(self.ip)) else {
                 return VmResult::err(VmErrorKind::IpOutOfBounds {
                     ip: self.ip,
